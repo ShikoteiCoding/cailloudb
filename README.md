@@ -38,37 +38,37 @@ classDiagram
   class Db {
     store
     \_\_init\_\_(store: Store)
-    delete(key)
-    exists(key)
-    get(key)
-    put(key, value)
+    delete(key: bytes)
+    exists(key: bytes)
+    get(key: bytes)
+    put(key: bytes, value: bytes)
+    shutdown()
   }
   class DbBuilder {
-    path : str
-    store : str
-    \_\_init\_\_(path: str)
+    name : str
+    store
+    \_\_init\_\_(name: str, store: Store)
     build() Db
   }
   class InMemoryStore {
-    \_\_d : dict
+    \_\_d : dict[bytes, bytes]
     \_\_init\_\_()
-    delete(key)
-    exists(key) bool
-    get(key)
-    put(key, value)
+    delete(key: bytes)
+    exists(key: bytes) bool
+    get(key: bytes) bytes
+    put(key: bytes, val: bytes)
+  }
+  class ObjectStore {
+    resolve(addr: str) Store
   }
   class Store {
-    delete(key)*
-    exists(key)* bool
-    get(key)* Any
-    put(key, val)*
-  }
-  class Store {
-    delete(key)*
-    exists(key)* bool
-    get(key)* Any
-    put(key, val)*
+    delete(key: bytes)*
+    exists(key: bytes)* bool
+    get(key: bytes)* bytes
+    put(key: bytes, val: bytes)*
   }
   InMemoryStore --|> Store
   Store --o Db : store
+  Store --o DbBuilder : store
+
 ```

@@ -23,7 +23,7 @@ class InMemoryStore(Store):
 
         self.__d = {}
 
-    async def get(self, key: bytes):
+    async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
