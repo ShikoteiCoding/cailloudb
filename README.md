@@ -2,6 +2,15 @@
 
 A very slow key-valye store - single node - object-storage backed.
 
+# Features
+
+- Async first
+
+# Quickstart
+```python
+
+```
+
 # Class Diagram
 
 ```mermaid

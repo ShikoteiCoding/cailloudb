@@ -7,7 +7,10 @@ authors = [
     { name = "ShikoteiCoding", email = "56791111+ShikoteiCoding@users.noreply.github.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "asyncio>=4.0.0",
+    "obstore>=0.11.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.7,<0.11.0"]
@@ -18,5 +21,6 @@ dev = [
     "graphviz>=0.21",
     "pylint>=4.0.6",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.15.20",
 ]

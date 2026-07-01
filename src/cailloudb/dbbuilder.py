@@ -1,16 +1,18 @@
+from typing import TYPE_CHECKING
+
 from db import Db
-from store import Store, InMemoryStore
+
+if TYPE_CHECKING:
+    from store import Store
 
 
 class DbBuilder:
-    store: str
+    name: str
+    store: Store
 
-    def __init__(self, path: str = ":memory:"):
-        self.path = path
+    def __init__(self, name: str, store: Store):
+        self.name = name
+        self.store = store
 
     def build(self) -> Db:
-        if self.path == ":memory:":
-            db = Db(InMemoryStore())
-            return db
-        
-        raise ValueError("Path {} not valid".format(self.path))
+        return Db(self.store)

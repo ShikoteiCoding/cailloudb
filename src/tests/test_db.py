@@ -1,39 +1,46 @@
 import pytest
 
-from cailloudb.dbbuilder import DbBuilder
+from conftest import TEST_DB
+from cailloudb import ObjectStore, DbBuilder
 
 
-def test_store_get_or_raise():
-    db = DbBuilder().build()
+@pytest.mark.asyncio
+async def test_store_get_or_raise():
+    store = ObjectStore.resolve(":memory:")
+    db = DbBuilder(TEST_DB, store).build()
 
-    db.put(b"test1", b"val1")
-    assert db.get(b"test1") == b"val1"
+    await db.put(b"test1", b"val1")
+    assert await db.get(b"test1") == b"val1"
 
-    db.put(b"test2", b"val2")
-    assert db.get(b"test2") == b"val2"
-
-    with pytest.raises(KeyError):
-        db.get(b"test3")
-
-
-def test_store_delete_or_raise():
-    db = DbBuilder().build()
-
-    db.put(b"test1", b"val1")
-    db.put(b"test2", b"val2")
-
-    db.delete(b"test1")
-    with pytest.raises(KeyError):
-        db.get(b"test1")
+    await db.put(b"test2", b"val2")
+    assert await db.get(b"test2") == b"val2"
 
     with pytest.raises(KeyError):
-        db.delete(b"test1")
+        await db.get(b"test3")
 
 
-def test_store_exist():
-    db = DbBuilder().build()
+@pytest.mark.asyncio
+async def test_store_delete_or_raise():
+    store = ObjectStore.resolve(":memory:")
+    db = DbBuilder(TEST_DB, store).build()
 
-    db.put(b"test1", b"val1")
+    await db.put(b"test1", b"val1")
+    await db.put(b"test2", b"val2")
 
-    assert db.exists(b"test1")
-    assert not db.exists(b"test2")
+    await db.delete(b"test1")
+    with pytest.raises(KeyError):
+        await db.get(b"test1")
+
+    with pytest.raises(KeyError):
+        await db.delete(b"test1")
+
+
+@pytest.mark.asyncio
+async def test_store_exist():
+    store = ObjectStore.resolve(":memory:")
+    db = DbBuilder(TEST_DB, store).build()
+
+    await db.put(b"test1", b"val1")
+
+    assert await db.exists(b"test1")
+    assert not await db.exists(b"test2")
