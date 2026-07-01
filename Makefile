@@ -3,3 +3,6 @@ ruff:
 
 test:
 	cd src && PYTHONPATH=cailloudb uv run pytest
+
+diag:
+	PYTHONPATH=./src/cailloudb/ uv run pyreverse -o mmd -f ALL -S src/cailloudb/

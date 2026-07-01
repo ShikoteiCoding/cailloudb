@@ -3,12 +3,14 @@ from store import Store, InMemoryStore
 
 
 class DbBuilder:
-    storage: Store
+    store: str
 
     def __init__(self, path: str = ":memory:"):
-        if path == ":memory:":
-            self.storage = InMemoryStore()
+        self.path = path
 
     def build(self) -> Db:
-        db = Db(self.storage)
-        return db
+        if self.path == ":memory:":
+            db = Db(InMemoryStore())
+            return db
+        
+        raise ValueError("Path {} not valid".format(self.path))

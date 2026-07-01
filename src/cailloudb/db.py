@@ -2,17 +2,19 @@ from store import Store
 
 
 class Db:
-    def __init__(self, storage: Store):
-        self.storage = storage
+    store: Store
+
+    def __init__(self, store: Store):
+        self.store = store
 
     def get(self, key):
-        return self.storage.get(key)
+        return self.store.get(key)
 
     def put(self, key, value):
-        self.storage.put(key, value)
+        self.store.put(key, value)
 
     def delete(self, key):
-        self.storage.delete(key)
+        self.store.delete(key)
 
     def exists(self, key):
-        return self.storage.exists(key)
+        return self.store.exists(key)
