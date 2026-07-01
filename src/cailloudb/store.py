@@ -1,44 +1,51 @@
-from typing import Any
-
 from abc import ABC, abstractmethod
 
 
 class Store(ABC):
     @abstractmethod
-    def get(self, key) -> Any: ...
+    async def get(self, key: bytes) -> bytes: ...
 
     @abstractmethod
-    def put(self, key, val): ...
+    async def put(self, key: bytes, val: bytes): ...
 
     @abstractmethod
-    def delete(self, key): ...
+    async def delete(self, key: bytes): ...
 
     @abstractmethod
-    def exists(self, key) -> bool: ...
+    async def exists(self, key: bytes) -> bool: ...
 
 
 class InMemoryStore(Store):
-    __d: dict
+    __d: dict[bytes, bytes]
 
     def __init__(self):
         super().__init__()
 
         self.__d = {}
 
-    def get(self, key):
+    async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
         return self.__d[key]
 
-    def put(self, key, value):
-        self.__d[key] = value
+    async def put(self, key: bytes, val: bytes):
+        self.__d[key] = val
 
-    def delete(self, key):
+    async def delete(self, key: bytes):
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
         del self.__d[key]
 
-    def exists(self, key) -> bool:
+    async def exists(self, key: bytes) -> bool:
         return key in self.__d
+
+
+class ObjectStore:
+    @classmethod
+    def resolve(cls, addr: str) -> Store:
+        if addr == ":memory:":
+            return InMemoryStore()
+
+        raise ValueError("Address format {} failed to resolve".format(addr))
