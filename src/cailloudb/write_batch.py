@@ -18,8 +18,12 @@ class WriteBatch:
       [4 bytes val length][val bytes]
     """
 
+    #: Buffer (for later compatibility with WAL)
+    _buf: bytearray
+
     _count: int
 
+    # Size of a key / value size
     _LEN = struct.Struct(">I")  # 4-byte unsigned
 
     def __init__(self):
