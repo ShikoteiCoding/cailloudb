@@ -29,7 +29,9 @@ class BaseStore(ABC):
     async def write(self, batch: WriteBatch): ...
 
     @abstractmethod
-    async def scan(self) -> AsyncIterator[tuple[bytes, bytes]]: ...
+    async def scan(
+        self, start_seq: SeqNum, end_seq: SeqNum
+    ) -> AsyncIterator[tuple[SeqNum, bytes, bytes | None]]: ...
 
     @abstractmethod
     async def latest_sequence_number(self) -> int: ...
@@ -38,11 +40,15 @@ class BaseStore(ABC):
 class InMemoryStore(BaseStore):
     #: Internal hashmap for storing KV store
     __d: dict[bytes, bytes]
+    #: Operation log indexed by sequence number
+    # TODO trim old log
+    __log: list[tuple[SeqNum, bytes, bytes | None]]
 
     def __init__(self):
         super().__init__()
 
         self.__d = {}
+        self.__log = []
         self._seq = 0
 
     async def get(self, key: bytes) -> bytes:
@@ -52,8 +58,9 @@ class InMemoryStore(BaseStore):
         return self.__d[key]
 
     async def put(self, key: bytes, val: bytes):
-        self.__d[key] = val
         self._seq += 1
+        self.__d[key] = val
+        self.__log.append((self._seq, key, val))
 
     async def delete(self, key: bytes):
         if key not in self.__d:
@@ -61,6 +68,7 @@ class InMemoryStore(BaseStore):
 
         self._seq += 1
         del self.__d[key]
+        self.__log.append((self._seq, key, None))
 
     async def exists(self, key: bytes) -> bool:
         return key in self.__d
@@ -72,10 +80,10 @@ class InMemoryStore(BaseStore):
             else:
                 await self.delete(key)
 
-    # TODO add range + prefix scan
-    async def scan(self):
-        for key in sorted(self.__d):
-            yield key, self.__d[key]
+    async def scan(self, start_seq: SeqNum, end_seq: SeqNum):
+        for seq, key, val in self.__log:
+            if start_seq <= seq <= end_seq:
+                yield key, val
 
     async def latest_sequence_number(self) -> int:
         return self._seq
