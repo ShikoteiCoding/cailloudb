@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
 
 from abc import ABC, abstractmethod
 
@@ -6,7 +6,13 @@ if TYPE_CHECKING:
     from write_batch import WriteBatch
 
 
+type SeqNum = int
+
+
 class BaseStore(ABC):
+    #: Sequence number
+    _seq: SeqNum
+
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
 
@@ -20,8 +26,13 @@ class BaseStore(ABC):
     async def exists(self, key: bytes) -> bool: ...
 
     @abstractmethod
-    async def write(self, batch: WriteBatch):
-        return
+    async def write(self, batch: WriteBatch): ...
+
+    @abstractmethod
+    async def scan(self) -> AsyncIterator: ...
+
+    @abstractmethod
+    async def latest_sequence_number(self) -> int: ...
 
 
 class InMemoryStore(BaseStore):
@@ -32,6 +43,7 @@ class InMemoryStore(BaseStore):
         super().__init__()
 
         self.__d = {}
+        self._seq = 0
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
@@ -41,11 +53,13 @@ class InMemoryStore(BaseStore):
 
     async def put(self, key: bytes, val: bytes):
         self.__d[key] = val
+        self._seq += 1
 
     async def delete(self, key: bytes):
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
+        self._seq += 1
         del self.__d[key]
 
     async def exists(self, key: bytes) -> bool:
@@ -57,6 +71,13 @@ class InMemoryStore(BaseStore):
                 await self.put(key, val)
             else:
                 await self.delete(key)
+
+    async def scan(self):
+        # TODO
+        raise NotImplementedError()
+
+    async def latest_sequence_number(self) -> int:
+        return self._seq
 
 
 class ObjectStore:

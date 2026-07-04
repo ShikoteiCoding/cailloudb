@@ -28,3 +28,6 @@ class Db:
 
     async def write(self, batch: WriteBatch):
         await self.store.write(batch)
+
+    async def latest_sequence_number(self) -> int:
+        return await self.store.latest_sequence_number()
