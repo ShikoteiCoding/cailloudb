@@ -5,7 +5,8 @@ A very slow key-valye store - single node - object-storage backed.
 # Features
 
 - Async api
-- Basic CRUD operations
+- Basic CRUD operations (in memory)
+- Atomic batch write (in memory)
 
 # Quickstart
 ```python

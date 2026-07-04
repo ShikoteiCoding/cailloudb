@@ -1,6 +1,6 @@
 import pytest
 
-from cailloudb import ObjectStore
+from cailloudb import ObjectStore, WriteBatch
 
 
 @pytest.mark.asyncio
@@ -40,3 +40,24 @@ async def test_in_memory_store_exist():
 
     assert await store.exists(b"test1")
     assert not await store.exists(b"test2")
+
+
+@pytest.mark.asyncio
+async def test_store_write_batch():
+    store = ObjectStore.resolve(":memory:")
+    batch = WriteBatch()
+
+    batch.put(b"test1", b"val1")
+    batch.put(b"test2", b"val2")
+    batch.put(b"test3", b"val3")
+    batch.delete(b"test2")
+
+    assert len(batch) == 4
+
+    await store.write(batch)
+
+    assert await store.get(b"test1") == b"val1"
+    assert await store.get(b"test3") == b"val3"
+
+    with pytest.raises(KeyError):
+        await store.get(b"test2")

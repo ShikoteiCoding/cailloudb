@@ -1,7 +1,12 @@
+from typing import TYPE_CHECKING
+
 from abc import ABC, abstractmethod
 
+if TYPE_CHECKING:
+    from write_batch import WriteBatch
 
-class Store(ABC):
+
+class BaseStore(ABC):
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
 
@@ -14,8 +19,13 @@ class Store(ABC):
     @abstractmethod
     async def exists(self, key: bytes) -> bool: ...
 
+    @abstractmethod
+    async def write(self, batch: WriteBatch):
+        return
 
-class InMemoryStore(Store):
+
+class InMemoryStore(BaseStore):
+    #: Internal hashmap for storing KV store
     __d: dict[bytes, bytes]
 
     def __init__(self):
@@ -41,10 +51,17 @@ class InMemoryStore(Store):
     async def exists(self, key: bytes) -> bool:
         return key in self.__d
 
+    async def write(self, batch: WriteBatch):
+        for key, val in batch:
+            if val:
+                await self.put(key, val)
+            else:
+                await self.delete(key)
+
 
 class ObjectStore:
     @classmethod
-    def resolve(cls, addr: str) -> Store:
+    def resolve(cls, addr: str) -> BaseStore:
         if addr == ":memory:":
             return InMemoryStore()
 

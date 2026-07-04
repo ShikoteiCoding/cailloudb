@@ -3,14 +3,17 @@ from typing import TYPE_CHECKING
 from db import Db
 
 if TYPE_CHECKING:
-    from store import Store
+    from store import BaseStore
 
 
 class DbBuilder:
+    #: Name of the Db KV wrapper
     name: str
-    store: Store
 
-    def __init__(self, name: str, store: Store):
+    #: Store ref
+    store: BaseStore
+
+    def __init__(self, name: str, store: BaseStore):
         self.name = name
         self.store = store
 
