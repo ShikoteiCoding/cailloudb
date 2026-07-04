@@ -18,6 +18,8 @@ async def test_store_get_or_raise():
     with pytest.raises(KeyError):
         await db.get(b"test3")
 
+    assert await db.latest_sequence_number() == 2
+
 
 @pytest.mark.asyncio
 async def test_store_delete_or_raise():
@@ -34,6 +36,8 @@ async def test_store_delete_or_raise():
     with pytest.raises(KeyError):
         await db.delete(b"test1")
 
+    assert await db.latest_sequence_number() == 3
+
 
 @pytest.mark.asyncio
 async def test_store_exist():
@@ -44,6 +48,8 @@ async def test_store_exist():
 
     assert await db.exists(b"test1")
     assert not await db.exists(b"test2")
+
+    assert await db.latest_sequence_number() == 1
 
 
 @pytest.mark.asyncio
@@ -67,3 +73,5 @@ async def test_store_write_batch():
 
     with pytest.raises(KeyError):
         await db.get(b"test2")
+
+    assert await db.latest_sequence_number() == 4

@@ -16,6 +16,8 @@ async def test_in_memory_store_get_or_raise():
     with pytest.raises(KeyError):
         await store.get(b"test3")
 
+    assert await store.latest_sequence_number() == 2
+
 
 @pytest.mark.asyncio
 async def test_in_memory_store_delete_or_raise():
@@ -31,6 +33,8 @@ async def test_in_memory_store_delete_or_raise():
     with pytest.raises(KeyError):
         await store.delete(b"test1")
 
+    assert await store.latest_sequence_number() == 3
+
 
 @pytest.mark.asyncio
 async def test_in_memory_store_exist():
@@ -40,6 +44,8 @@ async def test_in_memory_store_exist():
 
     assert await store.exists(b"test1")
     assert not await store.exists(b"test2")
+
+    assert await store.latest_sequence_number() == 1
 
 
 @pytest.mark.asyncio
@@ -61,3 +67,5 @@ async def test_store_write_batch():
 
     with pytest.raises(KeyError):
         await store.get(b"test2")
+
+    assert await store.latest_sequence_number() == 4
