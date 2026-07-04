@@ -69,3 +69,19 @@ async def test_store_write_batch():
         await store.get(b"test2")
 
     assert await store.latest_sequence_number() == 4
+
+
+@pytest.mark.asyncio
+async def test_in_memory_store_scan():
+    store = ObjectStore.resolve(":memory:")
+
+    await store.put(b"b", b"2")
+    await store.put(b"a", b"1")
+    await store.put(b"c", b"3")
+
+    items = [item async for item in store.scan()]
+    assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
+
+    await store.delete(b"b")
+    items = [item async for item in store.scan()]
+    assert items == [(b"a", b"1"), (b"c", b"3")]

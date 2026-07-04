@@ -31,3 +31,6 @@ class Db:
 
     async def latest_sequence_number(self) -> int:
         return await self.store.latest_sequence_number()
+
+    async def scan(self):
+        return await self.store.scan()

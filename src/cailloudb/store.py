@@ -29,7 +29,7 @@ class BaseStore(ABC):
     async def write(self, batch: WriteBatch): ...
 
     @abstractmethod
-    async def scan(self) -> AsyncIterator: ...
+    async def scan(self) -> AsyncIterator[tuple[bytes, bytes]]: ...
 
     @abstractmethod
     async def latest_sequence_number(self) -> int: ...
@@ -73,8 +73,8 @@ class InMemoryStore(BaseStore):
                 await self.delete(key)
 
     async def scan(self):
-        # TODO
-        raise NotImplementedError()
+        for key in sorted(self.__d):
+            yield key, self.__d[key]
 
     async def latest_sequence_number(self) -> int:
         return self._seq
