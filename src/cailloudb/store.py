@@ -29,9 +29,9 @@ class BaseStore(ABC):
     async def write(self, batch: WriteBatch): ...
 
     @abstractmethod
-    async def scan(
-        self, start_seq: SeqNum, end_seq: SeqNum
-    ) -> AsyncIterator[tuple[SeqNum, bytes, bytes | None]]: ...
+    def scan(
+        self, start_seq: int, end_seq: int
+    ) -> AsyncIterator[tuple[bytes, bytes | None]]: ...
 
     @abstractmethod
     async def latest_sequence_number(self) -> int: ...
@@ -80,7 +80,9 @@ class InMemoryStore(BaseStore):
             else:
                 await self.delete(key)
 
-    async def scan(self, start_seq: SeqNum, end_seq: SeqNum):
+    async def scan(
+        self, start_seq: int, end_seq: int
+    ) -> AsyncIterator[tuple[bytes, bytes | None]]:
         for seq, key, val in self.__log:
             if start_seq <= seq <= end_seq:
                 yield key, val

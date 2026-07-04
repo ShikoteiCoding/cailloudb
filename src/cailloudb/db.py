@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
 
 if TYPE_CHECKING:
     from store import BaseStore
@@ -32,5 +32,7 @@ class Db:
     async def latest_sequence_number(self) -> int:
         return await self.store.latest_sequence_number()
 
-    async def scan(self, start_seq: int, end_seq: int):
+    def scan(
+        self, start_seq: int, end_seq: int
+    ) -> AsyncIterator[tuple[bytes, bytes | None]]:
         return self.store.scan(start_seq, end_seq)
