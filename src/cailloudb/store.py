@@ -72,6 +72,7 @@ class InMemoryStore(BaseStore):
             else:
                 await self.delete(key)
 
+    # TODO add range + prefix scan
     async def scan(self):
         for key in sorted(self.__d):
             yield key, self.__d[key]
