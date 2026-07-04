@@ -1,14 +1,14 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from store import Store
+    from store import BaseStore
     from write_batch import WriteBatch
 
 
 class Db:
-    store: Store
+    store: BaseStore
 
-    def __init__(self, store: Store):
+    def __init__(self, store: BaseStore):
         self.store = store
 
     async def get(self, key: bytes):
@@ -26,8 +26,4 @@ class Db:
     async def shutdown(self): ...
 
     async def write(self, batch: WriteBatch):
-        for key, val in batch:
-            if val:
-                await self.put(key, val)
-            else:
-                await self.delete(key)
+        await self.store.write(batch)
