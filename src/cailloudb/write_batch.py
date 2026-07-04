@@ -23,8 +23,8 @@ class WriteBatch:
 
     _count: int
 
-    # Size of a key / value size
-    _LEN = struct.Struct(">I")  # 4-byte unsigned
+    # Size of a key / value size - 4 bytes unsigned int
+    _LEN = struct.Struct(">I")
 
     def __init__(self):
         self._buf = bytearray()

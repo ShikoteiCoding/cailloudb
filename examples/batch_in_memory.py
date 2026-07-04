@@ -5,7 +5,7 @@ from cailloudb import ObjectStore, DbBuilder, WriteBatch
 
 async def main():
     store = ObjectStore.resolve(":memory:")
-    builder = DbBuilder("", store)
+    builder = DbBuilder("test-db", store)
     db = builder.build()
 
     batch = WriteBatch()

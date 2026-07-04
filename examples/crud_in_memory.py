@@ -5,7 +5,7 @@ from cailloudb import ObjectStore, DbBuilder
 
 async def main():
     store = ObjectStore.resolve(":memory:")
-    builder = DbBuilder("", store)
+    builder = DbBuilder("test-db", store)
     db = builder.build()
 
     await db.put(b"entry1", b"value1")

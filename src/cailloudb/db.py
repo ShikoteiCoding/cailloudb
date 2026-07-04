@@ -6,6 +6,7 @@ if TYPE_CHECKING:
 
 
 class Db:
+    #: Actual KV Store
     store: BaseStore
 
     def __init__(self, store: BaseStore):

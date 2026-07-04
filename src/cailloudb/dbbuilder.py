@@ -7,7 +7,10 @@ if TYPE_CHECKING:
 
 
 class DbBuilder:
+    #: Name of the Db KV wrapper
     name: str
+
+    #: Store ref
     store: BaseStore
 
     def __init__(self, name: str, store: BaseStore):
