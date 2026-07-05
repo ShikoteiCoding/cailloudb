@@ -20,4 +20,5 @@ async def main():
     async for k, v in db.scan(bytes(10)):
         print(k.decode(), v.decode())
 
+
 asyncio.run(main())

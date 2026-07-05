@@ -99,4 +99,3 @@ async def test_in_memory_store_scan():
 
     items = [item async for item in db.scan()]
     assert items == [(b"a", b"1"), (b"c", b"3")]
-
