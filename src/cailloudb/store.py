@@ -1,7 +1,8 @@
-import bisect
 from typing import TYPE_CHECKING, AsyncIterator
 
 from abc import ABC, abstractmethod
+
+from sorted_key_index import SortedKeyIndex
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
@@ -41,27 +42,17 @@ class BaseStore(ABC):
 
 
 class InMemoryStore(BaseStore):
-    #: Internal hashmap for storing KV store
+    #: Key → value
     __d: dict[bytes, bytes]
-    #: Sorted keys (byte order)
-    __keys: list[bytes]
+    #: Sorted key index for range scans
+    __index: SortedKeyIndex
 
     def __init__(self):
         super().__init__()
 
         self.__d = {}
-        self.__keys = []
+        self.__index = SortedKeyIndex()
         self._seq = 0
-
-    def __insert_key(self, key: bytes) -> None:
-        if key in self.__d:
-            return
-        bisect.insort(self.__keys, key)
-
-    def __remove_key(self, key: bytes) -> None:
-        idx = bisect.bisect_left(self.__keys, key)
-        if idx < len(self.__keys) and self.__keys[idx] == key:
-            del self.__keys[idx]
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
@@ -71,7 +62,8 @@ class InMemoryStore(BaseStore):
 
     async def put(self, key: bytes, val: bytes):
         self._seq += 1
-        self.__insert_key(key)
+        if key not in self.__d:
+            self.__index.insert(key)
         self.__d[key] = val
 
     async def delete(self, key: bytes):
@@ -80,7 +72,7 @@ class InMemoryStore(BaseStore):
 
         self._seq += 1
         del self.__d[key]
-        self.__remove_key(key)
+        self.__index.remove(key)
 
     async def exists(self, key: bytes) -> bool:
         return key in self.__d
@@ -97,13 +89,7 @@ class InMemoryStore(BaseStore):
         start: bytes | None = None,
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
-        lo = bisect.bisect_left(self.__keys, start) if start is not None else 0
-        hi = (
-            bisect.bisect_left(self.__keys, end)
-            if end is not None
-            else len(self.__keys)
-        )
-        for key in self.__keys[lo:hi]:
+        for key in self.__index.range(start, end):
             yield key, self.__d[key]
 
     async def latest_sequence_number(self) -> int:
