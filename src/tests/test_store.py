@@ -82,6 +82,9 @@ async def test_in_memory_store_scan():
     items = [item async for item in store.scan()]
     assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
 
+    items = [item async for item in store.scan(b"b")]
+    assert items == [(b"b", b"2"), (b"c", b"3")]
+
     items = [item async for item in store.scan(b"b", b"c")]
     assert items == [(b"b", b"2")]
 
