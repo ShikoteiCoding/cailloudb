@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
+from transaction import Transaction
+
 if TYPE_CHECKING:
     from store import BaseStore
     from write_batch import WriteBatch
@@ -38,3 +40,6 @@ class Db:
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         return self.store.scan(start, end)
+
+    def begin(self) -> Transaction:
+        return Transaction(self)
