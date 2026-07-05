@@ -2,7 +2,7 @@ import bisect
 from collections.abc import Iterator
 
 
-class SortedKeyIndex:
+class KeyIndex:
     """Sorted byte-key index"""
 
     _keys: list[bytes]
@@ -14,7 +14,7 @@ class SortedKeyIndex:
         idx = bisect.bisect_left(self._keys, key)
         if idx < len(self._keys) and self._keys[idx] == key:
             return
-        bisect.insort(self._keys, key)
+        self._keys.insert(idx, key)
 
     def remove(self, key: bytes) -> None:
         idx = bisect.bisect_left(self._keys, key)
