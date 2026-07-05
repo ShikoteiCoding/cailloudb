@@ -24,7 +24,7 @@ class Transaction:
 
     async def commit(self) -> None:
         if self._committed:
-            raise RuntimeError("transaction already committed")
+            return
 
         await self._db.write(self._batch)
         self._committed = True
