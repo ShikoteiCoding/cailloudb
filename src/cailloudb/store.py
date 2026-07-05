@@ -1,3 +1,4 @@
+import bisect
 from typing import TYPE_CHECKING, AsyncIterator
 
 from abc import ABC, abstractmethod
@@ -30,8 +31,10 @@ class BaseStore(ABC):
 
     @abstractmethod
     def scan(
-        self, start_seq: int, end_seq: int
-    ) -> AsyncIterator[tuple[bytes, bytes | None]]: ...
+        self,
+        start: bytes | None = None,
+        end: bytes | None = None,
+    ) -> AsyncIterator[tuple[bytes, bytes]]: ...
 
     @abstractmethod
     async def latest_sequence_number(self) -> int: ...
@@ -40,16 +43,25 @@ class BaseStore(ABC):
 class InMemoryStore(BaseStore):
     #: Internal hashmap for storing KV store
     __d: dict[bytes, bytes]
-    #: Operation log indexed by sequence number
-    # TODO trim old log
-    __log: list[tuple[SeqNum, bytes, bytes | None]]
+    #: Sorted keys (byte order)
+    __keys: list[bytes]
 
     def __init__(self):
         super().__init__()
 
         self.__d = {}
-        self.__log = []
+        self.__keys = []
         self._seq = 0
+
+    def __insert_key(self, key: bytes) -> None:
+        if key in self.__d:
+            return
+        bisect.insort(self.__keys, key)
+
+    def __remove_key(self, key: bytes) -> None:
+        idx = bisect.bisect_left(self.__keys, key)
+        if idx < len(self.__keys) and self.__keys[idx] == key:
+            del self.__keys[idx]
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
@@ -59,8 +71,8 @@ class InMemoryStore(BaseStore):
 
     async def put(self, key: bytes, val: bytes):
         self._seq += 1
+        self.__insert_key(key)
         self.__d[key] = val
-        self.__log.append((self._seq, key, val))
 
     async def delete(self, key: bytes):
         if key not in self.__d:
@@ -68,7 +80,7 @@ class InMemoryStore(BaseStore):
 
         self._seq += 1
         del self.__d[key]
-        self.__log.append((self._seq, key, None))
+        self.__remove_key(key)
 
     async def exists(self, key: bytes) -> bool:
         return key in self.__d
@@ -81,11 +93,18 @@ class InMemoryStore(BaseStore):
                 await self.delete(key)
 
     async def scan(
-        self, start_seq: int, end_seq: int
-    ) -> AsyncIterator[tuple[bytes, bytes | None]]:
-        for seq, key, val in self.__log:
-            if start_seq <= seq <= end_seq:
-                yield key, val
+        self,
+        start: bytes | None = None,
+        end: bytes | None = None,
+    ) -> AsyncIterator[tuple[bytes, bytes]]:
+        lo = bisect.bisect_left(self.__keys, start) if start is not None else 0
+        hi = (
+            bisect.bisect_left(self.__keys, end)
+            if end is not None
+            else len(self.__keys)
+        )
+        for key in self.__keys[lo:hi]:
+            yield key, self.__d[key]
 
     async def latest_sequence_number(self) -> int:
         return self._seq

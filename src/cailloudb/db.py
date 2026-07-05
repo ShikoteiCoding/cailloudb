@@ -33,6 +33,8 @@ class Db:
         return await self.store.latest_sequence_number()
 
     def scan(
-        self, start_seq: int, end_seq: int
-    ) -> AsyncIterator[tuple[bytes, bytes | None]]:
-        return self.store.scan(start_seq, end_seq)
+        self,
+        start: bytes | None = None,
+        end: bytes | None = None,
+    ) -> AsyncIterator[tuple[bytes, bytes]]:
+        return self.store.scan(start, end)

@@ -79,13 +79,13 @@ async def test_in_memory_store_scan():
     await store.put(b"a", b"1")
     await store.put(b"c", b"3")
 
-    items = [item async for item in store.scan(1, 3)]
-    assert items == [(b"b", b"2"), (b"a", b"1"), (b"c", b"3")]
+    items = [item async for item in store.scan()]
+    assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
+
+    items = [item async for item in store.scan(b"b", b"c")]
+    assert items == [(b"b", b"2")]
 
     await store.delete(b"b")
 
-    items = [item async for item in store.scan(4, 4)]
-    assert items == [(b"b", None)]
-
-    items = [item async for item in store.scan(2, 3)]
+    items = [item async for item in store.scan()]
     assert items == [(b"a", b"1"), (b"c", b"3")]
