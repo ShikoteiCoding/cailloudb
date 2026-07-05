@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from abc import ABC, abstractmethod
 
-from sorted_key_index import SortedKeyIndex
+from key_index import SortedKeyIndex
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
