@@ -1,6 +1,6 @@
 # CaillouDB
 
-A very slow key-valye store - single node - object-storage backed.
+A very slow embedded key-valye store - single node - single-writer - object-storage backed.
 
 # Features
 

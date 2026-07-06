@@ -8,11 +8,24 @@ if TYPE_CHECKING:
     from write_batch import WriteBatch
 
 
-type SeqNum = int
+class SeqNum:
+    """Monotically increasing sequencer generator."""
+
+    #: Last sequence number
+    _value: int
+
+    def __init__(self):
+        self._value = 0
+
+    def increment(self):
+        self._value += 1
+
+    def __int__(self) -> int:
+        return self._value
 
 
 class BaseStore(ABC):
-    #: Sequence number
+    #: Sequence number for atomic write ops (put, del, merge)
     _seq: SeqNum
 
     @abstractmethod
@@ -44,6 +57,7 @@ class BaseStore(ABC):
 class InMemoryStore(BaseStore):
     #: Key → value
     __d: dict[bytes, bytes]
+
     #: Sorted key index for range scans
     __index: KeyIndex
 
@@ -61,7 +75,7 @@ class InMemoryStore(BaseStore):
         return self.__d[key]
 
     async def put(self, key: bytes, val: bytes):
-        self._seq += 1
+        self._seq.increment()
         if key not in self.__d:
             self.__index.insert(key)
         self.__d[key] = val
@@ -70,12 +84,9 @@ class InMemoryStore(BaseStore):
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
-        self._seq += 1
+        self._seq.increment()
         del self.__d[key]
         self.__index.remove(key)
-
-    async def exists(self, key: bytes) -> bool:
-        return key in self.__d
 
     async def write(self, batch: WriteBatch):
         for key, val in batch:
@@ -83,6 +94,9 @@ class InMemoryStore(BaseStore):
                 await self.put(key, val)
             else:
                 await self.delete(key)
+
+    async def exists(self, key: bytes) -> bool:
+        return key in self.__d
 
     async def scan(
         self,
@@ -93,7 +107,7 @@ class InMemoryStore(BaseStore):
             yield key, self.__d[key]
 
     async def latest_sequence_number(self) -> int:
-        return self._seq
+        return int(self._seq)
 
 
 class ObjectStore:
