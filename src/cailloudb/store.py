@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from abc import ABC, abstractmethod
 
-from key_index import SortedKeyIndex
+from index import KeyIndex
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
@@ -59,14 +59,14 @@ class InMemoryStore(BaseStore):
     __d: dict[bytes, bytes]
 
     #: Sorted key index for range scans
-    __index: SortedKeyIndex
+    __index: KeyIndex
 
     def __init__(self):
         super().__init__()
 
         self.__d = {}
-        self.__index = SortedKeyIndex()
-        self._seq = SeqNum()
+        self.__index = KeyIndex()
+        self._seq = 0
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
