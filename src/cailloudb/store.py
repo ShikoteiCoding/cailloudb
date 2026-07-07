@@ -66,7 +66,7 @@ class InMemoryStore(BaseStore):
 
         self.__d = {}
         self.__index = KeyIndex()
-        self._seq = 0
+        self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:

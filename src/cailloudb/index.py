@@ -3,7 +3,7 @@ from collections.abc import Iterator
 
 
 class KeyIndex:
-    """Sorted byte-key index"""
+    #: Sorted byte-key index
 
     _keys: list[bytes]
 

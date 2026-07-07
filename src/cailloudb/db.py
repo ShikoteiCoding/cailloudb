@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
+from dbreader import DbReader
+
 if TYPE_CHECKING:
     from store import BaseStore
     from write_batch import WriteBatch
@@ -11,6 +13,9 @@ class Db:
 
     def __init__(self, store: BaseStore):
         self.store = store
+
+    def reader(self) -> DbReader:
+        return DbReader(self.store)
 
     async def get(self, key: bytes):
         return await self.store.get(key)
