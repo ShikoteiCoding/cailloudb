@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 
 class DbReader:
-    """Read-only in-process"""
+    #: Read-only in-process view
 
     _store: BaseStore
 
