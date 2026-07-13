@@ -23,6 +23,20 @@ class SeqNum:
     def __int__(self) -> int:
         return self._value
 
+    def pinned_copy(self) -> "SeqNum":
+        copy = SeqNum()
+        copy._value = self._value
+        return copy
+
+    @classmethod
+    def with_value(cls, value: int) -> "SeqNum":
+        seq = cls()
+        seq._value = value
+        return seq
+
+
+LogEntry = tuple[SeqNum, bytes, bytes | None]
+
 
 class BaseStore(ABC):
     #: Sequence number for atomic write ops (put, del, merge)
@@ -53,6 +67,12 @@ class BaseStore(ABC):
     @abstractmethod
     async def latest_sequence_number(self) -> int: ...
 
+    @abstractmethod
+    def write_log(self) -> list[LogEntry]: ...
+
+    @abstractmethod
+    def pinned_sequence(self) -> SeqNum: ...
+
 
 class InMemoryStore(BaseStore):
     #: Key → value
@@ -61,11 +81,15 @@ class InMemoryStore(BaseStore):
     #: Sorted key index for range scans
     __index: KeyIndex
 
+    #: Append-only write log (seq, key, val|None)
+    __log: list[LogEntry]
+
     def __init__(self):
         super().__init__()
 
         self.__d = {}
         self.__index = KeyIndex()
+        self.__log = []
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes:
@@ -76,6 +100,7 @@ class InMemoryStore(BaseStore):
 
     async def put(self, key: bytes, val: bytes):
         self._seq.increment()
+        self.__log.append((self._seq.pinned_copy(), key, val))
         if key not in self.__d:
             self.__index.insert(key)
         self.__d[key] = val
@@ -85,6 +110,7 @@ class InMemoryStore(BaseStore):
             raise KeyError("key {} not found".format(key))
 
         self._seq.increment()
+        self.__log.append((self._seq.pinned_copy(), key, None))
         del self.__d[key]
         self.__index.remove(key)
 
@@ -108,6 +134,12 @@ class InMemoryStore(BaseStore):
 
     async def latest_sequence_number(self) -> int:
         return int(self._seq)
+
+    def write_log(self) -> list[LogEntry]:
+        return self.__log
+
+    def pinned_sequence(self) -> SeqNum:
+        return self._seq.pinned_copy()
 
 
 class ObjectStore:
