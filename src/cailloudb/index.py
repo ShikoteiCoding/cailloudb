@@ -1,5 +1,5 @@
 import bisect
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterator
 
 
 class KeyIndex:
@@ -9,12 +9,6 @@ class KeyIndex:
 
     def __init__(self):
         self._keys = []
-
-    @classmethod
-    def from_keys(cls, keys: Iterable[bytes]) -> "KeyIndex":
-        index = cls()
-        index._keys = sorted(keys)
-        return index
 
     def insert(self, key: bytes) -> None:
         idx = bisect.bisect_left(self._keys, key)

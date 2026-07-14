@@ -89,9 +89,9 @@ async def test_replay_log():
         (4, b"c", b"3"),
     ]
 
-    assert replay_log(log, 2) == {b"a": b"1", b"b": b"2"}
-    assert replay_log(log, 3) == {b"b": b"2"}
-    assert replay_log(log, 4) == {b"b": b"2", b"c": b"3"}
+    assert replay_log(log, 2)[0] == {b"a": b"1", b"b": b"2"}
+    assert replay_log(log, 3)[0] == {b"b": b"2"}
+    assert replay_log(log, 4)[0] == {b"b": b"2", b"c": b"3"}
 
 
 @pytest.mark.asyncio
@@ -209,9 +209,9 @@ async def test_replay_log_with_checkpoint():
     ]
     checkpoints = [Checkpoint(3, {b"b": b"2"}, 3)]
 
-    assert replay_log(log, 6, checkpoints) == {
+    assert replay_log(log, 6, checkpoints)[0] == {
         b"b": b"9",
         b"c": b"3",
         b"d": b"4",
     }
-    assert DbSnapshot.replay_log(log, 6) == replay_log(log, 6, checkpoints)
+    assert DbSnapshot.replay_log(log, 6)[0] == replay_log(log, 6, checkpoints)[0]

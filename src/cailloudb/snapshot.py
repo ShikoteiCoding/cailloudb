@@ -22,10 +22,9 @@ class DbSnapshot:
 
     def __init__(self, store: BaseStore):
         self._seq = store.pinned_sequence()
-        self.__d = self.replay_log(
+        self.__d, self.__index = self.replay_log(
             store.write_log(), self._seq, store.checkpoints()
         )
-        self.__index = KeyIndex.from_keys(self.__d)
 
     def seq(self) -> int:
         return self._seq
@@ -48,7 +47,7 @@ class DbSnapshot:
         log: Sequence[LogEntry],
         max_seq: int,
         checkpoints: Sequence[Checkpoint] = (),
-    ) -> dict[bytes, bytes]:
+    ) -> tuple[dict[bytes, bytes], KeyIndex]:
         """Rebuild key → value state from log entries up to max_seq."""
         checkpoint = DbSnapshot.find_checkpoint(checkpoints, max_seq)
         if checkpoint is None:
@@ -58,14 +57,22 @@ class DbSnapshot:
             state = dict(checkpoint.state)
             start = checkpoint.log_index
 
+        index = KeyIndex()
+        for key in state:
+            index.insert(key)
+
         for seq, key, val in log[start:]:
             if seq > max_seq:
                 break
             if val is None:
                 state.pop(key, None)
+                index.remove(key)
             else:
+                if key not in state:
+                    index.insert(key)
                 state[key] = val
-        return state
+
+        return state, index
 
     async def get(self, key: bytes) -> bytes:
         if key not in self.__d:
