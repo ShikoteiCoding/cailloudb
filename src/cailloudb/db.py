@@ -19,8 +19,8 @@ class Db:
         return DbReader(self.store)
 
     def snapshot(self) -> DbSnapshot:
-        state, index, seq = self.store.snapshot_state()
-        return DbSnapshot(state, index, seq)
+        pinned = self.store.snapshot_store()
+        return DbSnapshot(pinned, int(pinned._seq))
 
     async def get(self, key: bytes):
         return await self.store.get(key)

@@ -54,7 +54,7 @@ class BaseStore(ABC):
     async def latest_sequence_number(self) -> int: ...
 
     @abstractmethod
-    def snapshot_state(self) -> tuple[dict[bytes, bytes], KeyIndex, int]: ...
+    def snapshot_store(self) -> "BaseStore": ...
 
 
 class InMemoryStore(BaseStore):
@@ -112,8 +112,12 @@ class InMemoryStore(BaseStore):
     async def latest_sequence_number(self) -> int:
         return int(self._seq)
 
-    def snapshot_state(self) -> tuple[dict[bytes, bytes], KeyIndex, int]:
-        return dict(self.__d), self.__index.copy(), int(self._seq)
+    def snapshot_store(self) -> "InMemoryStore":
+        pinned = InMemoryStore()
+        pinned.__d = dict(self.__d)
+        pinned.__index = self.__index.copy()
+        pinned._seq._value = int(self._seq)
+        return pinned
 
 
 class ObjectStore:
