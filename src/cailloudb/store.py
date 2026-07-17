@@ -23,6 +23,12 @@ class SeqNum:
     def __int__(self) -> int:
         return self._value
 
+    @classmethod
+    def pinned(cls, value: int) -> "SeqNum":
+        seq = cls()
+        seq._value = value
+        return seq
+
 
 class BaseStore(ABC):
     #: Sequence number for atomic write ops (put, del, merge)
@@ -116,7 +122,7 @@ class InMemoryStore(BaseStore):
         pinned = InMemoryStore()
         pinned.__d = dict(self.__d)
         pinned.__index = self.__index.copy()
-        pinned._seq._value = int(self._seq)
+        pinned._seq = SeqNum.pinned(int(self._seq))
         return pinned
 
 

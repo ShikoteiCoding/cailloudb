@@ -5,20 +5,13 @@ if TYPE_CHECKING:
 
 
 class DbSnapshot:
-    #: Read-only point-in-time view pinned to a sequence number.
+    """Read-only point-in-time view pinned to a sequence number."""
 
-    #: Frozen copy of the store at snapshot time
+    #: Frozen copy of the store at snapshot time (not the live store)
     _store: BaseStore
 
-    #: Sequence number when the snapshot was taken
-    _seq: int
-
-    def __init__(self, store: BaseStore, seq: int):
+    def __init__(self, store: BaseStore):
         self._store = store
-        self._seq = seq
-
-    def seq(self) -> int:
-        return self._seq
 
     async def get(self, key: bytes) -> bytes:
         return await self._store.get(key)
@@ -32,3 +25,6 @@ class DbSnapshot:
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         return self._store.scan(start, end)
+
+    async def latest_sequence_number(self) -> int:
+        return await self._store.latest_sequence_number()

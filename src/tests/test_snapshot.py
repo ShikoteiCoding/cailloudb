@@ -13,7 +13,7 @@ async def test_snapshot_get():
 
     await db.put(b"k", b"v2")
 
-    assert snap.seq() == 1
+    assert await snap.latest_sequence_number() == 1
     assert await snap.get(b"k") == b"v1"
     assert await db.get(b"k") == b"v2"
 
