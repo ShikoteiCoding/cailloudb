@@ -10,11 +10,6 @@ class KeyIndex:
     def __init__(self):
         self._keys = []
 
-    def copy(self) -> "KeyIndex":
-        index = KeyIndex()
-        index._keys = list(self._keys)
-        return index
-
     def insert(self, key: bytes) -> None:
         idx = bisect.bisect_left(self._keys, key)
         if idx < len(self._keys) and self._keys[idx] == key:

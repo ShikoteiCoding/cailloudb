@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
+from store import SeqNum
+
 if TYPE_CHECKING:
     from store import BaseStore
 
@@ -7,24 +9,28 @@ if TYPE_CHECKING:
 class DbSnapshot:
     """Read-only point-in-time view pinned to a sequence number."""
 
-    #: Frozen copy of the store at snapshot time (not the live store)
+    #: Live store — reads resolve at pinned seq via versioned values
     _store: BaseStore
 
-    def __init__(self, store: BaseStore):
+    #: Sequence number at snapshot time
+    _seq: SeqNum
+
+    def __init__(self, store: BaseStore, seq: SeqNum):
         self._store = store
+        self._seq = seq
 
     async def get(self, key: bytes) -> bytes:
-        return await self._store.get(key)
+        return await self._store.get_at(key, int(self._seq))
 
     async def exists(self, key: bytes) -> bool:
-        return await self._store.exists(key)
+        return await self._store.exists_at(key, int(self._seq))
 
     def scan(
         self,
         start: bytes | None = None,
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
-        return self._store.scan(start, end)
+        return self._store.scan_at(int(self._seq), start, end)
 
     async def latest_sequence_number(self) -> int:
-        return await self._store.latest_sequence_number()
+        return int(self._seq)
