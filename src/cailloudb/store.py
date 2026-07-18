@@ -7,11 +7,11 @@ from index import KeyIndex
 if TYPE_CHECKING:
     from write_batch import WriteBatch
 
-Version = tuple[int, bytes | None]
+TOMBSTONE = b""
 
 
 class SeqNum:
-    """Monotically increasing sequencer generator."""
+    """Monotonically increasing sequencer generator."""
 
     #: Last sequence number
     _value: int
@@ -24,12 +24,6 @@ class SeqNum:
 
     def __int__(self) -> int:
         return self._value
-
-    @classmethod
-    def pinned(cls, value: int) -> SeqNum:
-        seq = cls()
-        seq._value = value
-        return seq
 
 
 class BaseStore(ABC):
@@ -77,8 +71,8 @@ class BaseStore(ABC):
 
 
 class InMemoryStore(BaseStore):
-    #: Key → versioned values (seq, val|None)
-    __d: dict[bytes, list[Version]]
+    #: Key → (seq, value) history; empty value is a tombstone
+    __d: dict[bytes, list[tuple[int, bytes]]]
 
     #: Sorted key index for live range scans
     __index: KeyIndex
@@ -94,38 +88,36 @@ class InMemoryStore(BaseStore):
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
-        val: bytes | None = None
-        found = False
-        for seq, version in self.__d[key]:
-            if seq > max_seq:
-                break
-            found = True
-            val = version
+        for seq, val in reversed(self.__d[key]):
+            if seq <= max_seq:
+                if val == TOMBSTONE:
+                    break
+                return val
 
-        if not found or val is None:
-            raise KeyError("key {} not found".format(key))
-
-        return val
+        raise KeyError("key {} not found".format(key))
 
     def _exists_at(self, key: bytes, max_seq: int) -> bool:
         if key not in self.__d:
             return False
 
-        val: bytes | None = None
-        found = False
-        for seq, version in self.__d[key]:
-            if seq > max_seq:
-                break
-            found = True
-            val = version
+        for seq, val in reversed(self.__d[key]):
+            if seq <= max_seq:
+                return val != TOMBSTONE
 
-        return found and val is not None
+        return False
 
     def _keys_at(self, max_seq: int) -> list[bytes]:
         return sorted(k for k in self.__d if self._exists_at(k, max_seq))
 
     async def get(self, key: bytes) -> bytes:
-        return await self.get_at(key, int(self._seq))
+        if key not in self.__d:
+            raise KeyError("key {} not found".format(key))
+
+        _, val = self.__d[key][-1]
+        if val == TOMBSTONE:
+            raise KeyError("key {} not found".format(key))
+
+        return val
 
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
@@ -138,11 +130,10 @@ class InMemoryStore(BaseStore):
         self.__d[key].append((int(self._seq), val))
 
     async def delete(self, key: bytes):
-        if not self._exists_at(key, int(self._seq)):
-            raise KeyError("key {} not found".format(key))
+        await self.get(key)
 
         self._seq.increment()
-        self.__d[key].append((int(self._seq), None))
+        self.__d[key].append((int(self._seq), TOMBSTONE))
         self.__index.remove(key)
 
     async def write(self, batch: WriteBatch):
@@ -153,7 +144,10 @@ class InMemoryStore(BaseStore):
                 await self.delete(key)
 
     async def exists(self, key: bytes) -> bool:
-        return await self.exists_at(key, int(self._seq))
+        if key not in self.__d:
+            return False
+
+        return self.__d[key][-1][1] != TOMBSTONE
 
     async def exists_at(self, key: bytes, max_seq: int) -> bool:
         return self._exists_at(key, max_seq)
@@ -164,7 +158,7 @@ class InMemoryStore(BaseStore):
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         for key in self.__index.range(start, end):
-            yield key, self._resolve_at(key, int(self._seq))
+            yield key, self.__d[key][-1][1]
 
     async def scan_at(
         self,

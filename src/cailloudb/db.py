@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from dbreader import DbReader
 from snapshot import DbSnapshot
-from store import SeqNum
 
 if TYPE_CHECKING:
     from store import BaseStore
@@ -20,7 +19,7 @@ class Db:
         return DbReader(self.store)
 
     def snapshot(self) -> DbSnapshot:
-        return DbSnapshot(self.store, SeqNum.pinned(int(self.store._seq)))
+        return DbSnapshot(self.store)
 
     async def get(self, key: bytes):
         return await self.store.get(key)
