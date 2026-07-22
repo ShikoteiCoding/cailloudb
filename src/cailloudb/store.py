@@ -1,4 +1,5 @@
 import bisect
+import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -6,8 +7,6 @@ from index import KeyIndex
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
-
-TOMBSTONE = b""
 
 
 class SeqNum:
@@ -71,8 +70,8 @@ class BaseStore(ABC):
 
 
 class InMemoryStore(BaseStore):
-    #: Key → (seq, value) history; empty value is a tombstone
-    __d: dict[bytes, list[tuple[int, bytes]]]
+    #: Key → event history; put has "bytes", delete does not
+    __d: dict[bytes, list[dict]]
 
     #: Sorted key index for live range scans
     __index: KeyIndex
@@ -88,36 +87,27 @@ class InMemoryStore(BaseStore):
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
-        for seq, val in reversed(self.__d[key]):
-            if seq <= max_seq:
-                if val == TOMBSTONE:
-                    break
-                return val
+        for event in reversed(self.__d[key]):
+            if event["seq"] > max_seq:
+                continue
+            if "bytes" in event:
+                return event["bytes"]
+            raise KeyError("key {} not found".format(key))
 
         raise KeyError("key {} not found".format(key))
 
     def _exists_at(self, key: bytes, max_seq: int) -> bool:
-        if key not in self.__d:
+        try:
+            self._resolve_at(key, max_seq)
+        except KeyError:
             return False
-
-        for seq, val in reversed(self.__d[key]):
-            if seq <= max_seq:
-                return val != TOMBSTONE
-
-        return False
+        return True
 
     def _keys_at(self, max_seq: int) -> list[bytes]:
         return sorted(k for k in self.__d if self._exists_at(k, max_seq))
 
     async def get(self, key: bytes) -> bytes:
-        if key not in self.__d:
-            raise KeyError("key {} not found".format(key))
-
-        _, val = self.__d[key][-1]
-        if val == TOMBSTONE:
-            raise KeyError("key {} not found".format(key))
-
-        return val
+        return self._resolve_at(key, int(self._seq))
 
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
@@ -127,13 +117,16 @@ class InMemoryStore(BaseStore):
         if key not in self.__d:
             self.__d[key] = []
             self.__index.insert(key)
-        self.__d[key].append((int(self._seq), val))
+
+        self.__d[key].append(
+            {"seq": int(self._seq), "bytes": val, "timestamp": int(time.time())}
+        )
 
     async def delete(self, key: bytes):
         await self.get(key)
 
         self._seq.increment()
-        self.__d[key].append((int(self._seq), TOMBSTONE))
+        self.__d[key].append({"seq": int(self._seq), "timestamp": int(time.time())})
         self.__index.remove(key)
 
     async def write(self, batch: WriteBatch):
@@ -144,10 +137,7 @@ class InMemoryStore(BaseStore):
                 await self.delete(key)
 
     async def exists(self, key: bytes) -> bool:
-        if key not in self.__d:
-            return False
-
-        return self.__d[key][-1][1] != TOMBSTONE
+        return self._exists_at(key, int(self._seq))
 
     async def exists_at(self, key: bytes, max_seq: int) -> bool:
         return self._exists_at(key, max_seq)
@@ -158,7 +148,7 @@ class InMemoryStore(BaseStore):
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         for key in self.__index.range(start, end):
-            yield key, self.__d[key][-1][1]
+            yield key, self._resolve_at(key, int(self._seq))
 
     async def scan_at(
         self,
