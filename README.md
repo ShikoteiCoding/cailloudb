@@ -43,6 +43,7 @@ classDiagram
     exists(key: bytes)
     get(key: bytes)
     put(key: bytes, value: bytes)
+    snapshot() DbSnapshot
     shutdown()
   }
   class DbBuilder {
@@ -50,6 +51,15 @@ classDiagram
     store
     \_\_init\_\_(name: str, store: Store)
     build() Db
+  }
+  class DbSnapshot {
+    \_store
+    \_seq : int
+    \_\_init\_\_(store: Store)
+    exists(key: bytes) bool
+    get(key: bytes) bytes
+    latest_sequence_number() int
+    scan(start: bytes, end: bytes)
   }
   class InMemoryStore {
     \_\_d : dict[bytes, bytes]
@@ -71,5 +81,6 @@ classDiagram
   InMemoryStore --|> Store
   Store --o Db : store
   Store --o DbBuilder : store
+  Store --o DbSnapshot : store
 
 ```
