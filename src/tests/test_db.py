@@ -1,12 +1,12 @@
 import pytest
 
 from conftest import TEST_DB
-from cailloudb import ObjectStore, DbBuilder, WriteBatch
+from cailloudb import InMemoryStore, DbBuilder, WriteBatch
 
 
 @pytest.mark.asyncio
 async def test_store_get_or_raise():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -23,7 +23,7 @@ async def test_store_get_or_raise():
 
 @pytest.mark.asyncio
 async def test_store_delete_or_raise():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -41,7 +41,7 @@ async def test_store_delete_or_raise():
 
 @pytest.mark.asyncio
 async def test_store_exist():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -54,7 +54,7 @@ async def test_store_exist():
 
 @pytest.mark.asyncio
 async def test_store_write_batch():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     batch = WriteBatch()
@@ -79,7 +79,7 @@ async def test_store_write_batch():
 
 @pytest.mark.asyncio
 async def test_in_memory_store_scan():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"b", b"2")

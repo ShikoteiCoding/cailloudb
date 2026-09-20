@@ -1,11 +1,11 @@
 import pytest
 
-from cailloudb import ObjectStore, WriteBatch
+from cailloudb import InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio
 async def test_in_memory_store_get_or_raise():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
 
     await store.put(b"test1", b"val1")
     assert await store.get(b"test1") == b"val1"
@@ -21,7 +21,7 @@ async def test_in_memory_store_get_or_raise():
 
 @pytest.mark.asyncio
 async def test_in_memory_store_delete_or_raise():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
 
     await store.put(b"test1", b"val1")
     await store.put(b"test2", b"val2")
@@ -38,7 +38,7 @@ async def test_in_memory_store_delete_or_raise():
 
 @pytest.mark.asyncio
 async def test_in_memory_store_exist():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
 
     await store.put(b"test1", b"val1")
 
@@ -50,7 +50,7 @@ async def test_in_memory_store_exist():
 
 @pytest.mark.asyncio
 async def test_store_write_batch():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     batch = WriteBatch()
 
     batch.put(b"test1", b"val1")
@@ -73,7 +73,7 @@ async def test_store_write_batch():
 
 @pytest.mark.asyncio
 async def test_in_memory_store_scan():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
 
     await store.put(b"b", b"2")
     await store.put(b"a", b"1")

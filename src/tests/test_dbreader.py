@@ -1,11 +1,11 @@
 import pytest
 
-from cailloudb import Db, ObjectStore
+from cailloudb import Db, InMemoryStore
 
 
 @pytest.mark.asyncio
 async def test_dbreader_get():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -18,7 +18,7 @@ async def test_dbreader_get():
 
 @pytest.mark.asyncio
 async def test_dbreader_exists():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -30,7 +30,7 @@ async def test_dbreader_exists():
 
 @pytest.mark.asyncio
 async def test_dbreader_scan():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -47,7 +47,7 @@ async def test_dbreader_scan():
 
 @pytest.mark.asyncio
 async def test_dbreader_sees_db_writes():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -65,7 +65,7 @@ async def test_dbreader_sees_db_writes():
 
 @pytest.mark.asyncio
 async def test_dbreader_latest_sequence_number():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -79,7 +79,7 @@ async def test_dbreader_latest_sequence_number():
 
 @pytest.mark.asyncio
 async def test_db_reader_shares_store():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     reader_a = db.reader()

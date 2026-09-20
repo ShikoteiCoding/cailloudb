@@ -166,7 +166,7 @@ class InMemoryStore(BaseStore):
         return int(self._seq)
 
 
-class ObjectStore:
+class DiskStore:
     @classmethod
     def resolve(cls, addr: str) -> BaseStore:
         if addr == ":memory:":

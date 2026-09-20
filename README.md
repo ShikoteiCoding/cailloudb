@@ -1,12 +1,17 @@
 # CaillouDB
 
-A very slow embedded key-valye store - single node - single-writer - object-storage backed.
+A very slow embedded key-valye store API - single node - single-writer. Aim to be externally managed, just gives the right APIs.
 
 # Features
 
 - Async api
 - Basic CRUD operations (in memory)
 - Atomic batch write (in memory)
+- Disk-backed (to come)
+- Disk WAL (to come)
+- LSM-tree (to come)
+- Compaction API (to come)
+- Multi-tiers API (to come)
 
 # Quickstart
 ```python
@@ -69,9 +74,6 @@ classDiagram
     get(key: bytes) bytes
     put(key: bytes, val: bytes)
   }
-  class ObjectStore {
-    resolve(addr: str) Store
-  }
   class Store {
     delete(key: bytes)*
     exists(key: bytes)* bool
@@ -82,5 +84,4 @@ classDiagram
   Store --o Db : store
   Store --o DbBuilder : store
   Store --o DbSnapshot : store
-
 ```
