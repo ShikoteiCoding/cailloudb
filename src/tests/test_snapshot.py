@@ -1,11 +1,11 @@
 import pytest
 
-from cailloudb import Db, DbBuilder, ObjectStore
+from cailloudb import Db, DbBuilder, InMemoryStore
 
 
 @pytest.mark.asyncio
 async def test_snapshot_get():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     await db.put(b"k", b"v1")
@@ -20,7 +20,7 @@ async def test_snapshot_get():
 
 @pytest.mark.asyncio
 async def test_snapshot_exists():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     snap = db.snapshot()
 
@@ -34,7 +34,7 @@ async def test_snapshot_exists():
 
 @pytest.mark.asyncio
 async def test_snapshot_delete_replay():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     await db.put(b"k", b"v1")
@@ -48,7 +48,7 @@ async def test_snapshot_delete_replay():
 
 @pytest.mark.asyncio
 async def test_snapshot_reput():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     await db.put(b"b", b"2")
@@ -62,7 +62,7 @@ async def test_snapshot_reput():
 
 @pytest.mark.asyncio
 async def test_snapshot_scan():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     await db.put(b"b", b"2")
@@ -80,7 +80,7 @@ async def test_snapshot_scan():
 
 @pytest.mark.asyncio
 async def test_dbbuilder_snapshot():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = DbBuilder("test-db", store).build()
 
     await db.put(b"k", b"v")
@@ -91,7 +91,7 @@ async def test_dbbuilder_snapshot():
 
 @pytest.mark.asyncio
 async def test_scan_same_on_db_and_reader():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
     reader = db.reader()
 
@@ -110,7 +110,7 @@ async def test_scan_same_on_db_and_reader():
 
 @pytest.mark.asyncio
 async def test_scan_same_range_semantics_on_snapshot():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     db = Db(store)
 
     await db.put(b"b", b"2")
