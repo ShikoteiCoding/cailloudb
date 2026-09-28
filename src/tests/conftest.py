@@ -4,7 +4,7 @@ import pytest
 
 TEST_DB = "test-db"
 
-# InMemoryStore writes here unless a test passes another path.
+# InMemoryStore writes here unless a test passes another path
 _WAL_PATH = Path("cailloudb-data") / "wal"
 
 
