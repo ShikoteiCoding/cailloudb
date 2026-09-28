@@ -1,12 +1,16 @@
 import bisect
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from index import KeyIndex
+from wal import Wal
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
+
+_DEFAULT_WAL = Path("cailloudb-data") / "wal"
 
 
 class SeqNum:
@@ -76,12 +80,16 @@ class InMemoryStore(BaseStore):
     #: Sorted key index for live range scans
     __index: KeyIndex
 
-    def __init__(self):
+    #: Write-ahead log
+    _wal: Wal
+
+    def __init__(self, wal_path: Path = _DEFAULT_WAL):
         super().__init__()
 
         self.__d = {}
         self.__index = KeyIndex()
         self._seq = SeqNum()
+        self._wal = Wal(wal_path)
 
     def _resolve_at(self, key: bytes, max_seq: int) -> bytes:
         if key not in self.__d:
@@ -112,7 +120,7 @@ class InMemoryStore(BaseStore):
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
 
-    async def put(self, key: bytes, val: bytes):
+    def _apply_put(self, key: bytes, val: bytes):
         self._seq.increment()
         if key not in self.__d:
             self.__d[key] = []
@@ -122,12 +130,21 @@ class InMemoryStore(BaseStore):
             {"seq": int(self._seq), "bytes": val, "timestamp": int(time.time())}
         )
 
-    async def delete(self, key: bytes):
-        await self.get(key)
-
+    def _apply_delete(self, key: bytes):
         self._seq.increment()
         self.__d[key].append({"seq": int(self._seq), "timestamp": int(time.time())})
         self.__index.remove(key)
+
+    async def put(self, key: bytes, val: bytes):
+        if not val:
+            raise ValueError("empty value")
+        await self._wal.append(key, val, int(self._seq) + 1)
+        self._apply_put(key, val)
+
+    async def delete(self, key: bytes):
+        await self.get(key)
+        await self._wal.append(key, b"", int(self._seq) + 1)
+        self._apply_delete(key)
 
     async def write(self, batch: WriteBatch):
         for key, val in batch:
