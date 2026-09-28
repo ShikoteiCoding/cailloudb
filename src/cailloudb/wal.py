@@ -6,9 +6,7 @@ from typing import AsyncIterator, Iterator
 
 class Wal:
     """
-    Disk write-ahead log.
-
-    Record:
+    Record Encoding:
       [4 bytes checksum][2 bytes payload length][payload]
 
     Payload:
@@ -17,17 +15,17 @@ class Wal:
     One record is one put or one delete. An empty value is a delete.
     """
 
-    # TODO: replace 4-byte key/value lengths with a cheaper encoding.
-    # TODO: extend this header (for example a log number), same append/recover/clear.
-    # TODO: log a WriteBatch as one record.
+    # TODO: replace 4-byte key/value lengths with a cheaper encoding
+    # TODO: extend this header (for example a log number), same append/recover/clear
+    # TODO: add write batch payload
 
-    _CRC = struct.Struct(">I")  # 4-byte big-endian checksum.
-    _PLEN = struct.Struct(">H")  # 2-byte big-endian payload length.
-    _SEQ = struct.Struct(">Q")  # 8-byte big-endian sequence number.
-    _LEN = struct.Struct(">I")  # 4-byte big-endian key or value length.
+    _CRC = struct.Struct(">I")  # 4-byte
+    _PLEN = struct.Struct(">H")  # 2-byte
+    _SEQ = struct.Struct(">Q")  # 8-byte
+    _LEN = struct.Struct(">I")  # 4-byte
     _HEADER = 6
 
-    #: First payload byte.
+    #: To differentiate single op and batch op
     _SINGLE = 0
 
     #: Log file path
@@ -35,8 +33,7 @@ class Wal:
 
     def __init__(self, path: Path):
         self._path = path
-        # create folder on disk if doesn't exist
-        # TODO: improve this part in future
+        # create folder on disk
         self._path.parent.mkdir(parents=True, exist_ok=True)
         if not self._path.exists():
             self._path.touch()
@@ -56,7 +53,7 @@ class Wal:
             + val
         )
         payload = bytes([self._SINGLE]) + body
-        # TODO: keep one file open and append each record to it.
+        # TODO: keep one file open and append each record to it
         with self._path.open("ab") as f:
             f.write(self._pack_record(payload))
             f.flush()
@@ -67,20 +64,20 @@ class Wal:
         offset = 0
         n = len(data)
         while offset < n:
-            # A short tail stops after the last good record.
+            # A short tail stops after the last good record, only one record is missed, acceptable
             if n - offset < self._HEADER:
                 return
             (checksum,) = self._CRC.unpack_from(data, offset)
             (payload_len,) = self._PLEN.unpack_from(data, offset + 4)
             frame_end = offset + self._HEADER + payload_len
-            # Part of this frame is past the end of the file, so this record is missed.
+            # Part of this frame is past the end of the file, so this record is missed
             if frame_end > n:
                 return
             payload = data[offset + self._HEADER : frame_end]
             offset = frame_end
-            # A checksum miss with bytes after it is corruption.
+            # A checksum miss with bytes after it is corruption
             if (zlib.crc32(payload) & 0xFFFFFFFF) != checksum:
-                # This frame is the end of the file, so only this one record is missed.
+                # This frame is the end of the file, only one record is missed, acceptable
                 if offset == n:
                     return
                 raise ValueError("wal checksum mismatch")
@@ -101,11 +98,11 @@ class Wal:
             val = bytes(body[inner : inner + val_len])
             yield seq, key, val
 
-    # TODO: replay these sequences into the store after a crash.
+    # TODO: replay these sequences into the store after a crash
     async def recover(self) -> AsyncIterator[tuple[int, bytes, bytes]]:
         for record in self.records():
             yield record
 
     async def clear(self):
-        # TODO: rotate to wal-(n+1) instead of truncating a single file.
+        # TODO: rotate to wal-(n+1) instead of truncating a single file
         self._path.write_bytes(b"")
