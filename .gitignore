@@ -3,5 +3,6 @@
 .vscode
 .pytest_cache
 __pycache__
+cailloudb-data/
 *.mmd
 test.py
