@@ -11,10 +11,10 @@ class Wal:
     Record Encoding:
       [4 bytes checksum][2 bytes payload length][payload]
 
-    Payload is a kind byte, then either a single operation or a WriteBatch.
+    Payload is a kind byte, then either a single operation or a WriteBatch
     Single operation:
       [1 byte kind][8 bytes sequence number][4 bytes key length][4 bytes val length][key bytes][val bytes]
-    WriteBatch payload is defined on WriteBatch.
+    WriteBatch payload is defined on WriteBatch
     """
 
     # TODO: replace 4-byte key/value lengths with a cheaper encoding
@@ -47,7 +47,6 @@ class Wal:
     async def append(
         self, key: bytes | WriteBatch, val: bytes | None = None, seq: int = 0
     ):
-        # TODO write batch own the encoded bytes but wal own the encoded bytes for signle, discuss better approach
         if isinstance(key, WriteBatch):
             payload = bytes([self._BATCH]) + bytes(key._buf)
         else:
