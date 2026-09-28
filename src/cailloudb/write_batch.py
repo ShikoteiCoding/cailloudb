@@ -5,27 +5,31 @@ import struct
 
 class WriteBatch:
     """
-    WriteBatch accumulates puts / deletes to be applied atomically.
+    WriteBatch accumulates puts / deletes to be applied atomically
 
-    Keeps operations ordering.
+    Keeps operations ordering
 
     Payload :
       [8 bytes sequence number][4 bytes record count]
       then each operation:
-        [4 bytes key length][4 bytes val length][key bytes][val bytes]
+        [1 byte op type][4 bytes key length][4 bytes val length][key bytes][val bytes]
 
-    An empty value is a delete.
-    The sequence number is the first operation. A batch of two operations
-    uses that sequence and the next one.
+    Op type is for future operators 
+    A delete stores an empty value
+    The sequence number is the first operation
+    A batch of two operations uses that sequence and the next one
     """
 
-    # TODO: replace 4-byte key/value lengths with a cheaper encoding.
-    # TODO: single-op WAL records have no batch header; decide if that path stays.
+    # TODO: replace 4-byte key/value lengths with a cheaper encoding
+    # TODO: single-op WAL records have no batch header, decide if that path stays
 
     _SEQ = struct.Struct(">Q")
     _COUNT = struct.Struct(">I")
     _LEN = struct.Struct(">I")
     _HEADER = 12
+
+    _PUT_BYTE = 0
+    _DEL_BYTE = 1
 
     #: sequence (8B) + count (4B) + encoded operations
     _buf: bytearray
@@ -44,12 +48,20 @@ class WriteBatch:
         self._buf[8:12] = self._COUNT.pack(self._count)
 
     def put(self, key: bytes, val: bytes):
-        self._buf += self._LEN.pack(len(key)) + self._LEN.pack(len(val)) + key + val
+        self._buf += (
+            bytes([self._PUT_BYTE])
+            + self._LEN.pack(len(key))
+            + self._LEN.pack(len(val))
+            + key
+            + val
+        )
         self._count += 1
         self._sync_header()
 
     def delete(self, key: bytes):
-        self._buf += self._LEN.pack(len(key)) + self._LEN.pack(0) + key
+        self._buf += (
+            bytes([self._DEL_BYTE]) + self._LEN.pack(len(key)) + self._LEN.pack(0) + key
+        )
         self._count += 1
         self._sync_header()
 
@@ -63,6 +75,8 @@ class WriteBatch:
         offset = self._HEADER
         n = len(buf)
         while offset < n:
+            op = buf[offset]
+            offset += 1
             (key_len,) = self._LEN.unpack_from(buf, offset)
             offset += 4
             (val_len,) = self._LEN.unpack_from(buf, offset)
@@ -72,7 +86,7 @@ class WriteBatch:
             val = bytes(buf[offset : offset + val_len])
             offset += val_len
 
-            if val_len == 0:
+            if op == self._DEL_BYTE:
                 yield key, None
             else:
                 yield key, val
