@@ -101,7 +101,7 @@ async def test_store_put_and_delete_append_to_wal():
 
 
 @pytest.mark.asyncio
-async def test_store_write_appends_each_operation():
+async def test_store_write_appends_one_batch_record():
     store = InMemoryStore()
     batch = WriteBatch()
     batch.put(b"a", b"1")
@@ -110,8 +110,42 @@ async def test_store_write_appends_each_operation():
 
     await store.write(batch)
 
+    data = store._wal._path.read_bytes()
+    (payload_len,) = _PLEN.unpack_from(data, 4)
+    assert len(data) == 6 + payload_len
+    assert data[6] == 1
+
     records = [record async for record in store._wal.recover()]
     assert records == [(1, b"a", b"1"), (2, b"b", b"2"), (3, b"a", b"")]
+
+
+@pytest.mark.asyncio
+async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
+    wal = Wal(tmp_path / "wal")
+    batch = WriteBatch()
+    batch.put(b"b", b"lyon")
+    batch.put(b"c", b"paris")
+    batch._seq = 2
+    batch._sync_header()
+    await wal.append(batch)
+
+    records = [record async for record in wal.recover()]
+    assert records == [(2, b"b", b"lyon"), (3, b"c", b"paris")]
+
+
+@pytest.mark.asyncio
+async def test_append_batch_of_hundreds_of_records(tmp_path):
+    wal = Wal(tmp_path / "wal")
+    count = 300
+    batch = WriteBatch()
+    for i in range(count):
+        batch.put(i.to_bytes(4, "big"), b"v")
+    batch._seq = 1
+    batch._sync_header()
+    await wal.append(batch)
+
+    records = [record async for record in wal.recover()]
+    assert records == [(i + 1, i.to_bytes(4, "big"), b"v") for i in range(count)]
 
 
 @pytest.mark.asyncio

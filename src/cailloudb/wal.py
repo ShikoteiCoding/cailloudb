@@ -3,6 +3,8 @@ import zlib
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
+from write_batch import WriteBatch
+
 
 class Wal:
     """
@@ -11,15 +13,15 @@ class Wal:
     Record:
       [4 bytes checksum][2 bytes payload length][payload]
 
-    Payload:
-      [1 byte kind][8 bytes sequence number][4 bytes key length][4 bytes val length][key bytes][val bytes]
-
-    One record is one put or one delete. An empty value is a delete.
+    Payload is a kind byte, then either a single operation or a WriteBatch.
+    Single operation:
+      [8 bytes sequence number][4 bytes key length][4 bytes val length][key bytes][val bytes]
+    WriteBatch payload is defined on WriteBatch.
     """
 
+    # TODO: single op has no type byte. Decide whether to keep it next to WriteBatch.
     # TODO: replace 4-byte key/value lengths with a cheaper encoding.
     # TODO: extend this header (for example a log number), same append/recover/clear.
-    # TODO: log a WriteBatch as one record.
 
     _CRC = struct.Struct(">I")  # 4-byte big-endian checksum.
     _PLEN = struct.Struct(">H")  # 2-byte big-endian payload length.
@@ -27,8 +29,9 @@ class Wal:
     _LEN = struct.Struct(">I")  # 4-byte big-endian key or value length.
     _HEADER = 6
 
-    #: First payload byte.
+    #: First payload byte. Single op has no batch header after this.
     _SINGLE = 0
+    _BATCH = 1
 
     #: Log file path
     _path: Path
@@ -45,24 +48,34 @@ class Wal:
         checksum = zlib.crc32(payload) & 0xFFFFFFFF
         return self._CRC.pack(checksum) + self._PLEN.pack(len(payload)) + payload
 
-    async def append(self, key: bytes, val: bytes | None = None, seq: int = 0):
-        if val is None:
-            val = b""
-        body = (
-            self._SEQ.pack(seq)
-            + self._LEN.pack(len(key))
-            + self._LEN.pack(len(val))
-            + key
-            + val
-        )
-        payload = bytes([self._SINGLE]) + body
+    async def append(
+        self, key: bytes | WriteBatch, val: bytes | None = None, seq: int = 0
+    ):
+        # TODO write batch own the encoded bytes but wal own the encoded bytes for signle, discuss better approach
+        if isinstance(key, WriteBatch):
+            payload = bytes([self._BATCH]) + bytes(key._buf)
+        else:
+            if val is None:
+                val = b""
+            body = (
+                self._SEQ.pack(seq)
+                + self._LEN.pack(len(key))
+                + self._LEN.pack(len(val))
+                + key
+                + val
+            )
+            payload = bytes([self._SINGLE]) + body
         # TODO: keep one file open and append each record to it.
         with self._path.open("ab") as f:
             f.write(self._pack_record(payload))
             f.flush()
 
     def records(self) -> Iterator[tuple[int, bytes, bytes]]:
-        """Yield each operation with its own sequence."""
+        """Yield each operation with its own sequence.
+
+        A batch record stores the first operation's sequence.
+        The next operation in that batch is that sequence plus one, and so on.
+        """
         data = self._path.read_bytes()
         offset = 0
         n = len(data)
@@ -87,6 +100,15 @@ class Wal:
 
             kind = payload[0]
             body = payload[1:]
+            if kind == self._BATCH:
+                (seq,) = WriteBatch._SEQ.unpack_from(body, 0)
+                batch = WriteBatch()
+                batch._buf = bytearray(body)
+                (batch._count,) = WriteBatch._COUNT.unpack_from(body, 8)
+                for key, value in batch:
+                    yield seq, key, b"" if value is None else value
+                    seq += 1
+                continue
             if kind != self._SINGLE:
                 raise ValueError("wal record kind")
 

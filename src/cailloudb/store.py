@@ -147,11 +147,15 @@ class InMemoryStore(BaseStore):
         self._apply_delete(key)
 
     async def write(self, batch: WriteBatch):
+        batch._seq = int(self._seq) + 1
+        batch._sync_header()
+        await self._wal.append(batch)
         for key, val in batch:
             if val:
-                await self.put(key, val)
+                self._apply_put(key, val)
             else:
-                await self.delete(key)
+                await self.get(key)
+                self._apply_delete(key)
 
     async def exists(self, key: bytes) -> bool:
         return self._exists_at(key, int(self._seq))
