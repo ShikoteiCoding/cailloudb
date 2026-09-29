@@ -2,29 +2,37 @@ from cailloudb.custom_types import TOMBSTONE
 from cailloudb.lsm.memtable import MemTable
 
 
-def test_skip_list_put_and_get():
-    mem_table = MemTable()
+def test_memtable_put_and_get():
+    memtable = MemTable()
 
-    mem_table.put(b"test1", b"val1")
+    memtable.put(b"key1", b"val1")
 
-    assert len(mem_table) == 1
-    assert mem_table.bytes_size == len(b"test1") + len(b"val1")
-    assert mem_table.get(b"test1") == b"val1"
-    assert mem_table.get(b"test2") is None
+    assert len(memtable) == 1
+    assert memtable.bytes_size == len(b"key1") + len(b"val1")
+    assert memtable.get(b"key1") == b"val1"
+    assert memtable.get(b"key2") is None
 
 
-def test_skip_list_put_and_delete():
-    mem_table = MemTable()
+def test_memtable_put_and_delete():
+    memtable = MemTable()
 
-    mem_table.put(b"test1", b"val1")
+    memtable.put(b"key1", b"val1")
 
-    assert len(mem_table) == 1
-    assert mem_table.bytes_size == len(b"test1") + len(b"val1")
-    assert mem_table.get(b"test1") == b"val1"
-    assert mem_table.get(b"test2") is None
+    assert len(memtable) == 1
+    assert memtable.bytes_size == len(b"key1") + len(b"val1")
+    assert memtable.get(b"key1") == b"val1"
+    assert memtable.get(b"key2") is None
 
-    mem_table.delete(b"test1")
+    memtable.delete(b"key1")
     # Deletes for now just replace value with deletion marker
-    assert len(mem_table) == 1
-    assert mem_table.bytes_size == len(b"test1") + len(TOMBSTONE)
-    assert mem_table.get(b"test1") == TOMBSTONE
+    assert len(memtable) == 1
+    assert memtable.bytes_size == len(b"key1") + len(TOMBSTONE)
+    assert memtable.get(b"key1") == TOMBSTONE
+
+
+def test_memtable_full():
+    memtable = MemTable(max_bytes_size=1)
+    assert not memtable.is_full()
+
+    memtable.put(b"key1", b"val1")
+    assert memtable.is_full()
