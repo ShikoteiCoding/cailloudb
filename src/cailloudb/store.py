@@ -1,16 +1,12 @@
 import bisect
 import time
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from index import KeyIndex
-from wal import Wal
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
-
-_DEFAULT_WAL = Path("cailloudb-data") / "wal"
 
 
 class SeqNum:
@@ -80,16 +76,12 @@ class InMemoryStore(BaseStore):
     #: Sorted key index for live range scans
     __index: KeyIndex
 
-    #: Write-ahead log
-    _wal: Wal
-
-    def __init__(self, wal_path: Path = _DEFAULT_WAL):
+    def __init__(self):
         super().__init__()
 
         self.__d = {}
         self.__index = KeyIndex()
         self._seq = SeqNum()
-        self._wal = Wal(wal_path)
 
     def _resolve_at(self, key: bytes, max_seq: int) -> bytes:
         if key not in self.__d:
@@ -120,33 +112,22 @@ class InMemoryStore(BaseStore):
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
 
-    def _apply_put(self, key: bytes, val: bytes, timestamp: int):
+    async def put(self, key: bytes, val: bytes):
         self._seq.increment()
         if key not in self.__d:
             self.__d[key] = []
             self.__index.insert(key)
 
         self.__d[key].append(
-            {"seq": int(self._seq), "bytes": val, "timestamp": timestamp}
+            {"seq": int(self._seq), "bytes": val, "timestamp": int(time.time())}
         )
-
-    def _apply_delete(self, key: bytes, timestamp: int):
-        self._seq.increment()
-        self.__d[key].append({"seq": int(self._seq), "timestamp": timestamp})
-        self.__index.remove(key)
-
-    async def put(self, key: bytes, val: bytes):
-        if not val:
-            raise ValueError("empty value")
-        timestamp = int(time.time())
-        await self._wal.append(key, val, int(self._seq) + 1, timestamp)
-        self._apply_put(key, val, timestamp)
 
     async def delete(self, key: bytes):
         await self.get(key)
-        timestamp = int(time.time())
-        await self._wal.append(key, b"", int(self._seq) + 1, timestamp)
-        self._apply_delete(key, timestamp)
+
+        self._seq.increment()
+        self.__d[key].append({"seq": int(self._seq), "timestamp": int(time.time())})
+        self.__index.remove(key)
 
     async def write(self, batch: WriteBatch):
         for key, val in batch:

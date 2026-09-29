@@ -92,15 +92,3 @@ async def test_in_memory_store_scan():
 
     items = [item async for item in store.scan()]
     assert items == [(b"a", b"1"), (b"c", b"3")]
-
-
-@pytest.mark.asyncio
-async def test_put_rejects_empty_value():
-    store = InMemoryStore()
-
-    with pytest.raises(ValueError, match="empty value"):
-        await store.put(b"a", b"")
-
-    assert await store.latest_sequence_number() == 0
-    records = [record async for record in store._wal.recover()]
-    assert records == []
