@@ -1,10 +1,10 @@
 import asyncio
 
-from cailloudb import ObjectStore, DbBuilder
+from cailloudb import DbBuilder, InMemoryStore
 
 
 async def main():
-    store = ObjectStore.resolve(":memory:")
+    store = InMemoryStore()
     builder = DbBuilder("test-db", store)
     db = builder.build()
 

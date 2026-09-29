@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import patch
 
+import pytest
+
 from cailloudb.lsm.skiplist import SkipList
-from custom_types import TOMBSTONE
 
 
 @pytest.fixture
@@ -28,22 +28,6 @@ def test_skiplist_put_and_get(skiplist: SkipList):
 
     assert skiplist.get(b"key1") == b"val1"
     assert skiplist.get(b"key2") is None
-
-
-def test_skiplist_put_and_delete(skiplist: SkipList):
-    skiplist.put(b"key1", b"val1")
-    initial_level = skiplist.level
-    initial_size = skiplist._size
-
-    assert len(skiplist) == 1 == initial_size
-    assert skiplist.level == initial_level
-
-    assert skiplist.get(b"key1") == b"val1"
-    assert skiplist.get(b"key2") is None
-
-    skiplist.delete(b"key1")
-    assert len(skiplist) == 0
-    assert skiplist.get(b"key1") == TOMBSTONE
 
 
 def test_skiplist_put_and_update(skiplist: SkipList):

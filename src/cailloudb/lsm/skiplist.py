@@ -1,11 +1,9 @@
 import random
 
-from custom_types import TOMBSTONE
-
 
 class _SkipNode:
     """
-    Smallest storage unit for SkipList.
+    Immutable storage unit for SkipList values.
     """
 
     __slots__ = ("key", "value", "forward")
@@ -21,6 +19,11 @@ class _SkipNode:
 class SkipList:
     """
     SkipList implementation (used in LSM-Tree Memtable).
+
+    Behavior:
+        Agnostic of the value content (accept bytes only).
+        Doesn't handle tombstone and deletion marker logic.
+        Logical deletion (through tombstone)
     """
 
     def __init__(self, max_level: int = 16, p: float = 0.5):
@@ -29,6 +32,7 @@ class SkipList:
         self.header = _SkipNode(key=b"", value=b"", level=self.max_level)
         self.level = 0
         self._size = 0
+        self.bytes_size = 0
 
     def _random_level(self) -> int:
         """
@@ -41,7 +45,7 @@ class SkipList:
 
     def put(self, key: bytes, value: bytes) -> None:
         """
-        Put an element inside the SkipList.
+        Add or update an element inside the SkipList.
         """
         # Array to store the nodes where we drop down a level during search
         update: list[_SkipNode] = [None] * (self.max_level + 1)  # type: ignore
@@ -58,6 +62,7 @@ class SkipList:
 
         # Scenario A: Key already exists. Overwrite value (or overwrite with Tombstone)
         if current is not None and current.key == key:
+            self.bytes_size += len(value) - len(current.value)
             current.value = value
             return
 
@@ -76,18 +81,16 @@ class SkipList:
             new_node.forward[i] = update[i].forward[i]
             update[i].forward[i] = new_node
 
+        self.bytes_size += len(key) + len(value)
         self._size += 1
-
-    def delete(self, key: bytes) -> None:
-        """
-        Syntactic sugar that puts a tombstone.
-        """
-        self.put(key, TOMBSTONE)
-        self._size -= 1
 
     def get(self, key: bytes) -> bytes | None:
         """
-        Retrieves a value. Returns None if the key doesn't exist or is a tombstone.
+        Retrieves a value.
+
+        Behavior:
+            None is exclusively returned for non found keys.
+            Returns the deletion marker as a valid value.
         """
         current = self.header
 
@@ -100,7 +103,7 @@ class SkipList:
 
         # Key found
         if current and current.key == key:
-            return current.value  # Returns None if it's a tombstone, otherwise the data
+            return current.value
 
         return None
 

@@ -3,26 +3,11 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
+from custom_types import SeqNum
 from index import KeyIndex
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
-
-
-class SeqNum:
-    """Monotonically increasing sequencer generator."""
-
-    #: Last sequence number
-    _value: int
-
-    def __init__(self):
-        self._value = 0
-
-    def increment(self):
-        self._value += 1
-
-    def __int__(self) -> int:
-        return self._value
 
 
 class BaseStore(ABC):

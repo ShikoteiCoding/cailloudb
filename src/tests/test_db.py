@@ -1,7 +1,7 @@
 import pytest
-
 from conftest import TEST_DB
-from cailloudb import InMemoryStore, DbBuilder, WriteBatch
+
+from cailloudb import DbBuilder, InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,5 @@
-from lsm.skiplist import SkipList
 from custom_types import TOMBSTONE
+from lsm.skiplist import SkipList
 
 
 class MemTable:
@@ -10,12 +10,10 @@ class MemTable:
     def __init__(self, max_bytes_size: int = 32 * 1024 * 1024):
         self.skiplist = SkipList()
         self.max_bytes_size = max_bytes_size
-        self.bytes_size = 0
-        self._size = 0
 
     def put(self, key: bytes, value: bytes) -> None:
         """
-        Add a new (key, value) pair.
+        Add or update a new (key, value) pair.
 
         Already existing keys are overriden.
         """
@@ -27,16 +25,24 @@ class MemTable:
 
         If the key doesn't exist, a tombstone is created nonetheless.
         """
-        self.skiplist.delete(key)
+        self.skiplist.put(key, TOMBSTONE)
 
     def get(self, key: bytes) -> bytes | None:
         """
-        Get a value or tombstone from key.
+        Get a value, tombstone or None from key.
+
+        Behavior:
+            None is exclusively returned for non found keys.
+            Returns the deletion marker as a valid value.
         """
-        val = self.skiplist.get(key)
-        if val == TOMBSTONE:
-            return None
-        return val
+        return self.skiplist.get(key)
+
+    @property
+    def bytes_size(self) -> int:
+        return self.skiplist.bytes_size
+
+    def is_full(self) -> bool:
+        return self.bytes_size >= self.max_bytes_size
 
     def __len__(self):
         return len(self.skiplist)

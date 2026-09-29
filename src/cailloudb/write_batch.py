@@ -1,6 +1,5 @@
-from typing import Iterator
-
 import struct
+from typing import Iterator
 
 PUT_BYTE = 0
 DEL_BYTE = 1
