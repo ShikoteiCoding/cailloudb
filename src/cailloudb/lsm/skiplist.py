@@ -1,6 +1,6 @@
 import random
 
-from lsm.custom_types import TOMBSTONE
+from custom_types import TOMBSTONE
 
 
 class _SkipNode:

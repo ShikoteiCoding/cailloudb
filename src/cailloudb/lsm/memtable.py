@@ -1,5 +1,5 @@
 from lsm.skiplist import SkipList
-from lsm.custom_types import TOMBSTONE
+from custom_types import TOMBSTONE
 
 
 class MemTable:

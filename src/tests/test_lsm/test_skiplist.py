@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch
 
 from cailloudb.lsm.skiplist import SkipList
-from cailloudb.lsm.custom_types import TOMBSTONE
+from custom_types import TOMBSTONE
 
 
 @pytest.fixture
