@@ -1,6 +1,18 @@
-from typing import Iterator
-
 import struct
+from typing import Iterator, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from store import SeqNum
+
+
+class Tombstone:
+    """Delete marker yielded by a batch. It is not a user value."""
+
+    def __repr__(self) -> str:
+        return "TOMBSTONE"
+
+
+TOMBSTONE = Tombstone()
 
 
 class WriteBatch:
@@ -14,8 +26,8 @@ class WriteBatch:
       then each operation:
         [1 byte op type][4 bytes key length][4 bytes val length][key bytes][val bytes]
 
-    Op type is for future operators 
-    A delete stores an empty value
+    Op type is a put, a delete, or a merge
+    A delete yields TOMBSTONE
     The sequence number is the first operation
     A batch of two operations uses that sequence and the next one
     """
@@ -36,15 +48,17 @@ class WriteBatch:
 
     _count: int
 
-    _seq: int
+    _seq: SeqNum
 
     def __init__(self):
+        from store import SeqNum
+
         self._buf = bytearray(self._HEADER)
         self._count = 0
-        self._seq = 0
+        self._seq = SeqNum()
 
     def _sync_header(self):
-        self._buf[0:8] = self._SEQ.pack(self._seq)
+        self._buf[0:8] = self._SEQ.pack(int(self._seq))
         self._buf[8:12] = self._COUNT.pack(self._count)
 
     def put(self, key: bytes, val: bytes):
@@ -66,11 +80,13 @@ class WriteBatch:
         self._sync_header()
 
     def clear(self):
+        from store import SeqNum
+
         self._buf = bytearray(self._HEADER)
         self._count = 0
-        self._seq = 0
+        self._seq = SeqNum()
 
-    def __iter__(self) -> Iterator[tuple[bytes, bytes | None]]:
+    def __iter__(self) -> Iterator[tuple[bytes, bytes | Tombstone]]:
         buf = self._buf
         offset = self._HEADER
         n = len(buf)
@@ -87,7 +103,7 @@ class WriteBatch:
             offset += val_len
 
             if op == self._DEL_BYTE:
-                yield key, None
+                yield key, TOMBSTONE
             else:
                 yield key, val
 

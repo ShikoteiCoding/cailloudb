@@ -4,12 +4,15 @@ import zlib
 import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
+from store import SeqNum
 
 
 _CRC = struct.Struct(">I")
 _PLEN = struct.Struct(">H")
 _SEQ = struct.Struct(">Q")
+_TS = struct.Struct(">Q")
 _LEN = struct.Struct(">I")
+_TIMESTAMP = 1_758_950_001
 
 
 @pytest.mark.asyncio
@@ -23,28 +26,36 @@ async def test_recover_empty_wal(tmp_path):
 @pytest.mark.asyncio
 async def test_append_put_then_recover(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", b"1")
+    await wal.append(b"a", b"1", timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
-    assert records == [(0, b"a", b"1")]
+    assert records == [(0, b"a", b"1", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
 async def test_append_delete_then_recover(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", b"")
+    await wal.append(b"a", b"", timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
-    assert records == [(0, b"a", b"")]
+    assert records == [(0, b"a", b"", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
 async def test_append_writes_length_prefixed_record(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"ab", b"xyz")
+    await wal.append(b"ab", b"xyz", timestamp=_TIMESTAMP)
 
-    payload = bytes([0]) + _SEQ.pack(0) + _LEN.pack(2) + _LEN.pack(3) + b"ab" + b"xyz"
+    payload = (
+        bytes([0])
+        + _SEQ.pack(0)
+        + _TS.pack(_TIMESTAMP)
+        + _LEN.pack(2)
+        + _LEN.pack(3)
+        + b"ab"
+        + b"xyz"
+    )
     checksum = zlib.crc32(payload) & 0xFFFFFFFF
     assert path.read_bytes() == _CRC.pack(checksum) + _PLEN.pack(len(payload)) + payload
 
@@ -52,17 +63,17 @@ async def test_append_writes_length_prefixed_record(tmp_path):
 @pytest.mark.asyncio
 async def test_append_preserves_order(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", b"1")
-    await wal.append(b"b", b"2")
-    await wal.append(b"a", b"")
-    await wal.append(b"c", b"3")
+    await wal.append(b"a", b"1", timestamp=_TIMESTAMP)
+    await wal.append(b"b", b"2", timestamp=_TIMESTAMP)
+    await wal.append(b"a", b"", timestamp=_TIMESTAMP)
+    await wal.append(b"c", b"3", timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
     assert records == [
-        (0, b"a", b"1"),
-        (0, b"b", b"2"),
-        (0, b"a", b""),
-        (0, b"c", b"3"),
+        (0, b"a", b"1", _TIMESTAMP),
+        (0, b"b", b"2", _TIMESTAMP),
+        (0, b"a", b"", _TIMESTAMP),
+        (0, b"c", b"3", _TIMESTAMP),
     ]
 
 
@@ -82,14 +93,15 @@ async def test_append_after_clear(tmp_path):
     wal = Wal(tmp_path / "wal")
     await wal.append(b"a", b"1")
     await wal.clear()
-    await wal.append(b"b", b"2")
+    await wal.append(b"b", b"2", timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
-    assert records == [(0, b"b", b"2")]
+    assert records == [(0, b"b", b"2", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
-async def test_store_put_and_delete_append_to_wal():
+async def test_store_put_and_delete_append_to_wal(monkeypatch):
+    monkeypatch.setattr("store.time.time", lambda: _TIMESTAMP)
     store = InMemoryStore()
 
     await store.put(b"a", b"1")
@@ -97,11 +109,16 @@ async def test_store_put_and_delete_append_to_wal():
     await store.delete(b"a")
 
     records = [record async for record in store._wal.recover()]
-    assert records == [(1, b"a", b"1"), (2, b"b", b"2"), (3, b"a", b"")]
+    assert records == [
+        (1, b"a", b"1", _TIMESTAMP),
+        (2, b"b", b"2", _TIMESTAMP),
+        (3, b"a", b"", _TIMESTAMP),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_store_write_appends_one_batch_record():
+async def test_store_write_appends_one_batch_record(monkeypatch):
+    monkeypatch.setattr("store.time.time", lambda: _TIMESTAMP)
     store = InMemoryStore()
     batch = WriteBatch()
     batch.put(b"a", b"1")
@@ -116,7 +133,11 @@ async def test_store_write_appends_one_batch_record():
     assert data[6] == 1
 
     records = [record async for record in store._wal.recover()]
-    assert records == [(1, b"a", b"1"), (2, b"b", b"2"), (3, b"a", b"")]
+    assert records == [
+        (1, b"a", b"1", _TIMESTAMP),
+        (2, b"b", b"2", _TIMESTAMP),
+        (3, b"a", b"", _TIMESTAMP),
+    ]
 
 
 @pytest.mark.asyncio
@@ -125,12 +146,15 @@ async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
     batch = WriteBatch()
     batch.put(b"b", b"lyon")
     batch.put(b"c", b"paris")
-    batch._seq = 2
+    batch._seq = SeqNum(2)
     batch._sync_header()
-    await wal.append(batch)
+    await wal.append(batch, timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
-    assert records == [(2, b"b", b"lyon"), (3, b"c", b"paris")]
+    assert records == [
+        (2, b"b", b"lyon", _TIMESTAMP),
+        (3, b"c", b"paris", _TIMESTAMP),
+    ]
 
 
 @pytest.mark.asyncio
@@ -140,12 +164,14 @@ async def test_append_batch_of_hundreds_of_records(tmp_path):
     batch = WriteBatch()
     for i in range(count):
         batch.put(i.to_bytes(4, "big"), b"v")
-    batch._seq = 1
+    batch._seq = SeqNum(1)
     batch._sync_header()
-    await wal.append(batch)
+    await wal.append(batch, timestamp=_TIMESTAMP)
 
     records = [record async for record in wal.recover()]
-    assert records == [(i + 1, i.to_bytes(4, "big"), b"v") for i in range(count)]
+    assert records == [
+        (i + 1, i.to_bytes(4, "big"), b"v", _TIMESTAMP) for i in range(count)
+    ]
 
 
 @pytest.mark.asyncio
@@ -156,7 +182,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
     await wal.append(b"a", b"")
 
     store = InMemoryStore()
-    async for _, key, val in wal.recover():
+    async for _, key, val, _timestamp in wal.recover():
         if val:
             await store.put(key, val)
         else:
@@ -171,25 +197,25 @@ async def test_recover_replays_into_empty_store(tmp_path):
 async def test_recover_returns_records_before_a_short_tail(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", b"1", seq=1)
-    await wal.append(b"b", b"2", seq=2)
+    await wal.append(b"a", b"1", seq=1, timestamp=_TIMESTAMP)
+    await wal.append(b"b", b"2", seq=2, timestamp=_TIMESTAMP)
 
     path.write_bytes(path.read_bytes()[:-8])
 
     records = [record async for record in wal.recover()]
-    assert records == [(1, b"a", b"1")]
+    assert records == [(1, b"a", b"1", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
 async def test_recover_returns_records_before_a_partial_header(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", b"1", seq=1)
+    await wal.append(b"a", b"1", seq=1, timestamp=_TIMESTAMP)
 
     path.write_bytes(path.read_bytes() + b"\x01\x02\x03")
 
     records = [record async for record in wal.recover()]
-    assert records == [(1, b"a", b"1")]
+    assert records == [(1, b"a", b"1", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
@@ -213,26 +239,26 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
 async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", b"1", seq=1)
+    await wal.append(b"a", b"1", seq=1, timestamp=_TIMESTAMP)
     last = path.stat().st_size
-    await wal.append(b"b", b"2", seq=2)
+    await wal.append(b"b", b"2", seq=2, timestamp=_TIMESTAMP)
 
     data = bytearray(path.read_bytes())
     data[last] ^= 0xFF
     path.write_bytes(data)
 
     records = [record async for record in wal.recover()]
-    assert records == [(1, b"a", b"1")]
+    assert records == [(1, b"a", b"1", _TIMESTAMP)]
 
 
 @pytest.mark.asyncio
 async def test_append_rejects_payload_longer_than_uint16(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", b"1", seq=1)
+    await wal.append(b"a", b"1", seq=1, timestamp=_TIMESTAMP)
 
-    # kind + seq + lengths + 1-byte key + value exceeds the 2-byte payload length.
+    # kind + seq + timestamp + lengths + 1-byte key + value exceeds the 2-byte payload length.
     with pytest.raises(struct.error):
         await wal.append(b"k", b"x" * 65519, seq=2)
 
     records = [record async for record in wal.recover()]
-    assert records == [(1, b"a", b"1")]
+    assert records == [(1, b"a", b"1", _TIMESTAMP)]

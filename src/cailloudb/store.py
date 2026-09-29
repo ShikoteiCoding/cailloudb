@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 from index import KeyIndex
 from wal import Wal
+from write_batch import TOMBSTONE
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
@@ -19,8 +20,8 @@ class SeqNum:
     #: Last sequence number
     _value: int
 
-    def __init__(self):
-        self._value = 0
+    def __init__(self, value: int = 0):
+        self._value = value
 
     def increment(self):
         self._value += 1
@@ -120,42 +121,45 @@ class InMemoryStore(BaseStore):
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
 
-    def _apply_put(self, key: bytes, val: bytes):
+    def _apply_put(self, key: bytes, val: bytes, timestamp: int):
         self._seq.increment()
         if key not in self.__d:
             self.__d[key] = []
             self.__index.insert(key)
 
         self.__d[key].append(
-            {"seq": int(self._seq), "bytes": val, "timestamp": int(time.time())}
+            {"seq": int(self._seq), "bytes": val, "timestamp": timestamp}
         )
 
-    def _apply_delete(self, key: bytes):
+    def _apply_delete(self, key: bytes, timestamp: int):
         self._seq.increment()
-        self.__d[key].append({"seq": int(self._seq), "timestamp": int(time.time())})
+        self.__d[key].append({"seq": int(self._seq), "timestamp": timestamp})
         self.__index.remove(key)
 
     async def put(self, key: bytes, val: bytes):
         if not val:
             raise ValueError("empty value")
-        await self._wal.append(key, val, int(self._seq) + 1)
-        self._apply_put(key, val)
+        timestamp = int(time.time())
+        await self._wal.append(key, val, int(self._seq) + 1, timestamp)
+        self._apply_put(key, val, timestamp)
 
     async def delete(self, key: bytes):
         await self.get(key)
-        await self._wal.append(key, b"", int(self._seq) + 1)
-        self._apply_delete(key)
+        timestamp = int(time.time())
+        await self._wal.append(key, b"", int(self._seq) + 1, timestamp)
+        self._apply_delete(key, timestamp)
 
     async def write(self, batch: WriteBatch):
-        batch._seq = int(self._seq) + 1
+        timestamp = int(time.time())
+        batch._seq = SeqNum(int(self._seq) + 1)
         batch._sync_header()
-        await self._wal.append(batch)
+        await self._wal.append(batch, timestamp=timestamp)
         for key, val in batch:
-            if val:
-                self._apply_put(key, val)
-            else:
+            if val is TOMBSTONE:
                 await self.get(key)
-                self._apply_delete(key)
+                self._apply_delete(key, timestamp)
+            else:
+                self._apply_put(key, val, timestamp)
 
     async def exists(self, key: bytes) -> bool:
         return self._exists_at(key, int(self._seq))
