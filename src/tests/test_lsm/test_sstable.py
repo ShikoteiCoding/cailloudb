@@ -25,6 +25,7 @@ def test_sstable_writer_encode_memtable_entry_tombstone():
 
     assert isinstance(buf, bytearray)
     assert size == len(buf)
+    assert size > 0
 
 
 def test_sstable_writer_write_sstable():
@@ -54,3 +55,20 @@ def test_sstable_writer_to_disk():
     assert len(result.offsets) == 1
     assert result.file.tell() == 0
     assert len(result.file.getvalue()) > 0
+
+
+def test_sstable_get():
+    writer = SSTableWriter(in_memory=True)
+    memtable = MemTable()
+
+    memtable.put(key=b"apple", seq_num=1, value=b"red")
+    memtable.put(key=b"banana", seq_num=2, value=b"yellow")
+    memtable.put(key=b"cherry", seq_num=3, value=TOMBSTONE)
+
+    sstable = writer.write(memtable)
+
+    assert sstable.get(b"apple") == b"red"
+    assert sstable.get(b"banana") == b"yellow"
+
+    assert sstable.get(b"zebra") is None
+    assert sstable.get(b"cherry") == TOMBSTONE

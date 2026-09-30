@@ -3,7 +3,9 @@ import struct
 from pathlib import Path
 
 from constants import (
+    _DELETED_STRUCT,
     _KEY_LEN_STRUCT,
+    _LEN_DELETED,
     _LEN_KEY_LEN,
     _LEN_SEQUENCE_NUM,
     _LEN_VAL_LEN,
@@ -11,7 +13,7 @@ from constants import (
     _VAL_LEN_STRUCT,
     TOMBSTONE,
 )
-from custom_types import MemTableEntry, SSTableEntry
+from custom_types import MemTableEntry
 from lsm.memtable import MemTable
 
 
@@ -22,6 +24,7 @@ class SSTableWriter:
     Encoding for each entry:
         [4 bytes key length][key bytes]
         [8 bytes for sequence number]
+        [2 bytes for tombstone bool]
         [4 bytes val length][val bytes] <- Can be empty
     """
 
@@ -37,24 +40,35 @@ class SSTableWriter:
         val_len = 0 if is_tombstone else len(value)
 
         total_size = (
-            _LEN_KEY_LEN + len(key) + _LEN_SEQUENCE_NUM + _LEN_VAL_LEN + len(value)
+            _LEN_KEY_LEN
+            + len(key)
+            + _LEN_SEQUENCE_NUM
+            + _LEN_DELETED
+            + (_LEN_VAL_LEN if val_len > 0 else 0)
+            + val_len
         )
         buf = bytearray(total_size)
 
-        # Pack key
+        # Pack key length
         _KEY_LEN_STRUCT.pack_into(buf, 0, len(key))
-        offset = 4
+        offset = _LEN_KEY_LEN
+
+        # Pack key
         buf[offset : offset + len(key)] = key
+        offset += len(key)
 
         # Pack sequence number
-        offset += len(key)
         _SEQ_STRUCT.pack_into(buf, offset, seq_num)
+        offset += _LEN_SEQUENCE_NUM
+
+        # Pack tombstone bool
+        _DELETED_STRUCT.pack_into(buf, offset, int(is_tombstone))
+        offset += _LEN_DELETED
 
         # Pack value (if tombstone pack nothing)
-        offset += 8
-        _VAL_LEN_STRUCT.pack_into(buf, offset, len(value))
-        offset += 4
         if val_len > 0:
+            _VAL_LEN_STRUCT.pack_into(buf, offset, val_len)
+            offset += _LEN_VAL_LEN
             buf[offset : offset + val_len] = value
 
         return buf, total_size
@@ -71,7 +85,6 @@ class SSTableWriter:
         file = io.BytesIO()
 
         for entry in memtable:
-            print(entry)
             offsets.append(offset)
 
             buf, total_size = self.encode_memtable_entry(entry)
@@ -92,7 +105,7 @@ class SSTable:
         self.path = path
         self.offsets: list[int] = offsets
 
-        # TODO: Used for bloom filter
+        # TODO: Used as skip filter
         # self.low_key: bytes = low_key
         # self.high_key: bytes = high_key
 
@@ -104,6 +117,49 @@ class SSTable:
         """
         raise NotImplementedError()
 
+    def get(self, key: bytes) -> bytes | None:
+        """
+        Binary search over offsets.
+        """
+        left = 0
+        right = len(self.offsets) - 1
+
+        while left <= right:
+            mid = (left + right) // 2
+            offset = self.offsets[mid]
+
+            self.file.seek(offset)
+
+            # Unpack key length
+            key_len_bytes = self.file.read(_LEN_KEY_LEN)
+            key_len = _KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
+
+            # Read key
+            table_key = self.file.read(key_len)
+            print(key, table_key)
+
+            if key == table_key:
+                # Skip sequence number (debatable)
+                self.file.seek(_LEN_SEQUENCE_NUM, io.SEEK_CUR)
+
+                # Read deleted flag
+                is_deleted_bytes = self.file.read(_LEN_DELETED)
+                is_deleted = _DELETED_STRUCT.unpack(is_deleted_bytes)[0]
+                if is_deleted:
+                    return TOMBSTONE
+
+                # Unpack value length
+                val_len_bytes = self.file.read(_LEN_VAL_LEN)
+                val_len = _VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
+                return self.file.read(val_len)
+
+            elif key > table_key:
+                left = mid + 1
+            else:
+                right = mid - 1
+
+        return None
+
 
 class InMemorySSTable(SSTable):
     """
@@ -112,6 +168,3 @@ class InMemorySSTable(SSTable):
 
     def __init__(self, file: io.BytesIO, path: str, offsets: list[int]):
         super().__init__(file, path, offsets)
-
-    def get(self, key: bytes) -> SSTableEntry | None:
-        pass

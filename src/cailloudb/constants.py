@@ -10,3 +10,6 @@ _VAL_LEN_STRUCT = struct.Struct("<I")
 
 _LEN_SEQUENCE_NUM = 8
 _SEQ_STRUCT = struct.Struct("<Q")
+
+_LEN_DELETED = 1
+_DELETED_STRUCT = struct.Struct("B")
