@@ -57,7 +57,7 @@ def test_skiplist_insert_new_node_level_0(mock_random, skiplist: SkipList):
     # Verify internal pointers
     node = skiplist.header.forward[0]
     assert node is not None
-    assert node.is_key(b"key1")
+    assert node.key == b"key1"
     assert node.value == b"val1"
     assert node.seq_num == 0
 
@@ -114,10 +114,10 @@ def test_skiplist_complex_pointer_routing(mock_random, skiplist: SkipList):
     node_c = node_b.forward[0]
     node_d = node_c.forward[0]
 
-    assert node_a.is_key(b"A")
-    assert node_b.is_key(b"B")
-    assert node_c.is_key(b"C")
-    assert node_d.is_key(b"D")
+    assert node_a.key == b"A"
+    assert node_b.key == b"B"
+    assert node_c.key == b"C"
+    assert node_d.key == b"D"
 
     # Check forward refs from level 2
     assert skiplist.header.forward[2] is node_b
@@ -143,13 +143,13 @@ def test_skiplist_put_out_of_order_insertion(mock_random, skiplist: SkipList):
 
     # L0 traversal should yield A -> M -> Z
     curr = skiplist.header.forward[0]
-    assert curr.is_key(b"A")
+    assert curr.key == b"A"
 
     curr = curr.forward[0]
-    assert curr.is_key(b"M")
+    assert curr.key == b"M"
 
     curr = curr.forward[0]
-    assert curr.is_key(b"Z")
+    assert curr.key == b"Z"
 
     # Z should terminate the list
     assert curr.forward[0] is None
