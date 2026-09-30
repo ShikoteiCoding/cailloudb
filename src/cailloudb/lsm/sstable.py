@@ -16,7 +16,16 @@ from lsm.memtable import MemTable
 
 
 class SSTableWriter:
-    def __init__(self, in_memory: bool, dir: Path | None):
+    """
+    Encode and write entries from cailloudb.lsm.memtable.MemTable.
+
+    Encoding for each entry:
+        [4 bytes key length][key bytes]
+        [8 bytes for sequence number]
+        [4 bytes val length][val bytes] <- Can be empty
+    """
+
+    def __init__(self, in_memory: bool, dir: Path | None = None):
         self.in_memory = in_memory
         self.dir = dir
 
@@ -53,13 +62,7 @@ class SSTableWriter:
     def write(self, memtable: MemTable) -> SSTable:
         """
         Write each MemTableEntries of the MemTable to destination.
-
-        Encoding for each entry:
-            [4 bytes key length][key bytes]
-            [8 bytes for sequence number]
-            [4 bytes val length][val bytes] <- Can be empty
         """
-
         # Keep track of offset of each records for fast lookup
         offsets = []
         offset = 0
@@ -68,6 +71,7 @@ class SSTableWriter:
         file = io.BytesIO()
 
         for entry in memtable:
+            print(entry)
             offsets.append(offset)
 
             buf, total_size = self.encode_memtable_entry(entry)
@@ -75,14 +79,14 @@ class SSTableWriter:
 
             offset += total_size
 
+        # Debetable
+        file.seek(0)
         if self.in_memory:
             return InMemorySSTable(file=file, path=path, offsets=offsets)
         return SSTable(file=file, path=path, offsets=offsets)
 
 
 class SSTable:
-    """ """
-
     def __init__(self, file: io.BytesIO, path: str, offsets: list[int]):
         self.file = file
         self.path = path

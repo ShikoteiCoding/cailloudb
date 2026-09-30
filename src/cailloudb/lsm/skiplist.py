@@ -123,7 +123,7 @@ class SkipList:
             while (
                 current.forward[i]
                 and
-                # Trick: b"foo" is always less than b"foo\xff..."
+                # Trick, b"foo" is always less than b"foo\xff..."
                 current.forward[i].composite_key < key
             ):
                 current = current.forward[i]
@@ -156,6 +156,7 @@ class SkipList:
             yield MemTableEntry(
                 key=current.key, seq_num=current.seq_num, value=current.value
             )
+            current = current.forward[0]
 
     def __len__(self) -> int:
         return self._size
