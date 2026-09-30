@@ -11,6 +11,9 @@ _LEN_SEQUENCE_NUM = 8
 class _SkipNode:
     """
     Immutable storage unit for SkipList values.
+
+    Stores a composite_key (kept as bytes for performance) that always follows:
+    [key of varying length][encoded sequence_number of fixed length]
     """
 
     __slots__ = ("composite_key", "value", "forward")
