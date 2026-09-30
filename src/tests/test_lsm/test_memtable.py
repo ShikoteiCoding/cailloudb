@@ -1,4 +1,4 @@
-from cailloudb.custom_types import TOMBSTONE
+from cailloudb.constants import TOMBSTONE
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.skiplist import _LEN_SEQUENCE_NUM
 

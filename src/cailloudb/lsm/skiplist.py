@@ -1,11 +1,8 @@
 import random
-from typing import TYPE_CHECKING
+from typing import Iterator
 
-if TYPE_CHECKING:
-    from custom_types import SeqNum
-
-#: Length of sequence number contributing to key-version total length
-_LEN_SEQUENCE_NUM = 8
+from constants import _LEN_SEQUENCE_NUM
+from custom_types import MemTableEntry
 
 
 class _SkipNode:
@@ -123,7 +120,12 @@ class SkipList:
 
         # Traverse the skiplist top-down / left-to-right
         for i in range(self.level, -1, -1):
-            while current.forward[i] and current.forward[i].composite_key < key:
+            while (
+                current.forward[i]
+                and
+                # Trick: b"foo" is always less than b"foo\xff..."
+                current.forward[i].composite_key < key
+            ):
                 current = current.forward[i]
         current = current.forward[0]
 
@@ -135,6 +137,25 @@ class SkipList:
             return current.seq_num, current.value
 
         return None
+
+    def __iter__(self) -> Iterator[MemTableEntry]:
+        """
+        Sequentially yields all entries stored in the SkipList.
+
+        When this method is called, it is usually when the MemTable is marked as immutable.
+        This happens either when the MemTable is full or when a flush is triggered.
+        For this reason, no write/read conflicts are to be expected / handled here.
+
+        Behavior:
+            Ordering guarantee as the SkipList property
+            Parse raw bytes to lightweight MemTableEntry typeddict
+        """
+        current = self.header.forward[0]
+
+        while current is not None:
+            yield MemTableEntry(
+                key=current.key, seq_num=current.seq_num, value=current.value
+            )
 
     def __len__(self) -> int:
         return self._size

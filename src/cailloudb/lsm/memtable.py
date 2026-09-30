@@ -1,4 +1,7 @@
-from custom_types import TOMBSTONE
+from typing import Iterator
+
+from constants import TOMBSTONE
+from custom_types import MemTableEntry
 from lsm.skiplist import SkipList
 
 
@@ -41,6 +44,10 @@ class MemTable:
         if val:
             return val[1]
         return None
+
+    def __iter__(self) -> Iterator[MemTableEntry]:
+        for entry in self.skiplist:
+            yield entry
 
     @property
     def bytes_size(self) -> int:
