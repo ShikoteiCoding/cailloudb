@@ -108,7 +108,7 @@ class SkipList:
         self.bytes_size += len(composite_key) + len(value)
         self._size += 1
 
-    def get(self, key: bytes) -> tuple[int, bytes] | None:
+    def get(self, key: bytes) -> MemTableEntry | None:
         """
         Retrieves the latest value of a key along with its sequence number.
 
@@ -134,7 +134,7 @@ class SkipList:
             and current.key == key
             and len(current.composite_key) == len(key) + self._LEN_SEQUENCE_NUM
         ):
-            return current.seq_num, current.value
+            return MemTableEntry(key=key, seq_num=current.seq_num, value=current.value)
 
         return None
 
@@ -148,7 +148,7 @@ class SkipList:
 
         Behavior:
             Ordering guarantee as the SkipList property
-            Parse raw bytes to lightweight MemTableEntry typeddict
+            Parse raw bytes to lightweight SkipListEntry typeddict
         """
         current = self.header.forward[0]
 
