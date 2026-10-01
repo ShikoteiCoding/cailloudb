@@ -13,7 +13,7 @@ from constants import (
     _VAL_LEN_STRUCT,
     TOMBSTONE,
 )
-from custom_types import MemTableEntry
+from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 
 
@@ -115,9 +115,34 @@ class SSTable:
 
         Used during compaction.
         """
-        raise NotImplementedError()
+        # Get Key
+        for offset in self.offsets:
+            self.file.seek(offset)
 
-    def get(self, key: bytes) -> bytes | None:
+            # Read key
+            key_len_bytes = self.file.read(_LEN_KEY_LEN)
+            key_len = _KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
+            key = self.file.read(key_len)
+
+            # Read sequence number
+            seq_num_bytes = self.file.read(_LEN_SEQUENCE_NUM)
+            seq_num = int(_SEQ_STRUCT.unpack(seq_num_bytes)[0])
+
+            # Read deleted flag
+            is_deleted_bytes = self.file.read(_LEN_DELETED)
+            is_deleted = _DELETED_STRUCT.unpack(is_deleted_bytes)[0]
+
+            # Read value / tombstone
+            if is_deleted:
+                yield SSTableEntry(key=key, seq_num=seq_num, value=TOMBSTONE)
+
+            else:
+                val_len_bytes = self.file.read(_LEN_VAL_LEN)
+                val_len = _VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
+                val = self.file.read(val_len)
+                yield SSTableEntry(key=key, seq_num=seq_num, value=val)
+
+    def get(self, key: bytes) -> SSTableEntry | None:
         """
         Binary search over offsets.
         """
@@ -136,22 +161,23 @@ class SSTable:
 
             # Read key
             table_key = self.file.read(key_len)
-            print(key, table_key)
 
             if key == table_key:
-                # Skip sequence number (debatable)
-                self.file.seek(_LEN_SEQUENCE_NUM, io.SEEK_CUR)
+                #  Read sequence number
+                seq_num_bytes = self.file.read(_LEN_SEQUENCE_NUM)
+                seq_num = int(_SEQ_STRUCT.unpack(seq_num_bytes)[0])
 
                 # Read deleted flag
                 is_deleted_bytes = self.file.read(_LEN_DELETED)
                 is_deleted = _DELETED_STRUCT.unpack(is_deleted_bytes)[0]
                 if is_deleted:
-                    return TOMBSTONE
+                    return SSTableEntry(key=key, seq_num=seq_num, value=TOMBSTONE)
 
                 # Unpack value length
                 val_len_bytes = self.file.read(_LEN_VAL_LEN)
                 val_len = _VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
-                return self.file.read(val_len)
+                val = self.file.read(val_len)
+                return SSTableEntry(key=key, seq_num=seq_num, value=val)
 
             elif key > table_key:
                 left = mid + 1
