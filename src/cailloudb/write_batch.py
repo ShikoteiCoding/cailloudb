@@ -1,18 +1,6 @@
 import struct
-from typing import Iterator, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from store import SeqNum
-
-
-class Tombstone:
-    """Delete marker yielded by a batch. It is not a user value."""
-
-    def __repr__(self) -> str:
-        return "TOMBSTONE"
-
-
-TOMBSTONE = Tombstone()
+from typing import Iterator
+from constants import TOMBSTONE
 
 
 class WriteBatch:
@@ -46,20 +34,16 @@ class WriteBatch:
     #: sequence (8B) + count (4B) + encoded operations
     _buf: bytearray
 
-    _count: int
-
-    _seq: SeqNum
+    count: int
 
     def __init__(self):
-        from store import SeqNum
 
         self._buf = bytearray(self._HEADER)
-        self._count = 0
-        self._seq = SeqNum()
+        self.count = 0
 
-    def _sync_header(self):
-        self._buf[0:8] = self._SEQ.pack(int(self._seq))
-        self._buf[8:12] = self._COUNT.pack(self._count)
+    def _sync_header(self, seq_num: int):
+        self._buf[0:8] = self._SEQ.pack(seq_num)
+        self._buf[8:12] = self._COUNT.pack(self.count)
 
     def put(self, key: bytes, val: bytes):
         self._buf += (
@@ -69,24 +53,19 @@ class WriteBatch:
             + key
             + val
         )
-        self._count += 1
-        self._sync_header()
+        self.count += 1
 
     def delete(self, key: bytes):
         self._buf += (
             bytes([self._DEL_BYTE]) + self._LEN.pack(len(key)) + self._LEN.pack(0) + key
         )
-        self._count += 1
-        self._sync_header()
+        self.count += 1
 
     def clear(self):
-        from store import SeqNum
-
         self._buf = bytearray(self._HEADER)
-        self._count = 0
-        self._seq = SeqNum()
+        self.count = 0
 
-    def __iter__(self) -> Iterator[tuple[bytes, bytes | Tombstone]]:
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         buf = self._buf
         offset = self._HEADER
         n = len(buf)
@@ -107,7 +86,7 @@ class WriteBatch:
             else:
                 yield key, val
 
-            self._count -= 1
+            self.count -= 1
 
     def __len__(self) -> int:
-        return self._count
+        return self.count

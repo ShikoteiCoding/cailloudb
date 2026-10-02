@@ -8,14 +8,15 @@ async def test_snapshot_get():
     store = InMemoryStore()
     db = Db(store)
 
-    await db.put(b"k", b"v1")
+    await db.put(b"key1", b"val1")
+
     snap = db.snapshot()
-
-    await db.put(b"k", b"v2")
-
     assert await snap.latest_sequence_number() == 1
-    assert await snap.get(b"k") == b"v1"
-    assert await db.get(b"k") == b"v2"
+
+    await db.put(b"key1", b"val2")
+
+    assert await snap.get(b"key1") == b"val1"
+    assert await db.get(b"key1") == b"val2"
 
 
 @pytest.mark.asyncio

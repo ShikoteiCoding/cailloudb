@@ -95,11 +95,11 @@ async def test_in_memory_store_scan():
 
 
 @pytest.mark.asyncio
-async def test_put_rejects_empty_value():
+async def test_put_rejects_none_value():
     store = InMemoryStore()
 
-    with pytest.raises(ValueError, match="empty value"):
-        await store.put(b"a", b"")
+    with pytest.raises(ValueError):
+        await store.put(b"a", None)  # type: ignore
 
     assert await store.latest_sequence_number() == 0
     records = [record async for record in store._wal.recover()]

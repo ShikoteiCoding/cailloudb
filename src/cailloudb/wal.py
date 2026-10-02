@@ -55,12 +55,10 @@ class Wal:
     async def append(
         self,
         key: bytes | WriteBatch,
+        seq_num: int,
         val: bytes | None = None,
-        seq: int = 0,
-        timestamp: int | None = None,
     ) -> int:
-        if timestamp is None:
-            timestamp = int(time.time())
+        timestamp = int(time.time())
         if isinstance(key, WriteBatch):
             payload = (
                 bytes([self._BATCH_KIND]) + self._TS.pack(timestamp) + bytes(key._buf)
@@ -69,7 +67,7 @@ class Wal:
             if val is None:
                 val = b""
             body = (
-                self._SEQ.pack(seq)
+                self._SEQ.pack(seq_num)
                 + self._TS.pack(timestamp)
                 + self._LEN.pack(len(key))
                 + self._LEN.pack(len(val))
@@ -83,7 +81,7 @@ class Wal:
             f.flush()
         return timestamp
 
-    def records(self) -> Iterator[tuple[int, bytes, bytes, int]]:
+    def records(self) -> Iterator[tuple[bytes, int, bytes]]:
         """Yield each operation with its own sequence.
 
         A batch record stores the first operation's sequence.
@@ -116,19 +114,19 @@ class Wal:
             if kind == self._BATCH_KIND:
                 (timestamp,) = self._TS.unpack_from(body, 0)
                 batch_body = body[8:]
-                (seq,) = WriteBatch._SEQ.unpack_from(batch_body, 0)
+                (seq_num,) = WriteBatch._SEQ.unpack_from(batch_body, 0)
                 batch = WriteBatch()
                 batch._buf = bytearray(batch_body)
-                (batch._count,) = WriteBatch._COUNT.unpack_from(batch_body, 8)
+                (batch.count,) = WriteBatch._COUNT.unpack_from(batch_body, 8)
                 for key, value in batch:
                     stored = b"" if value is TOMBSTONE else value
-                    yield seq, key, stored, timestamp
-                    seq += 1
+                    yield key, seq_num, stored
+                    seq_num += 1
                 continue
             if kind != self._SINGLE_KIND:
                 raise ValueError("wal record kind")
 
-            (seq,) = self._SEQ.unpack_from(body, 0)
+            (seq_num,) = self._SEQ.unpack_from(body, 0)
             (timestamp,) = self._TS.unpack_from(body, 8)
             inner = 16
             (key_len,) = self._LEN.unpack_from(body, inner)
@@ -138,10 +136,10 @@ class Wal:
             key = bytes(body[inner : inner + key_len])
             inner += key_len
             val = bytes(body[inner : inner + val_len])
-            yield seq, key, val, timestamp
+            yield key, seq_num, val
 
     # TODO: replay these sequences into the store after a crash
-    async def recover(self) -> AsyncIterator[tuple[int, bytes, bytes, int]]:
+    async def recover(self) -> AsyncIterator[tuple[bytes, int, bytes]]:
         for record in self.records():
             yield record
 
