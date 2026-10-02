@@ -2,29 +2,15 @@ import bisect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
+from constants import DEFAULT_WAL, TOMBSTONE
+from custom_types import SeqNum
 from index import KeyIndex
 from wal import Wal
-from constants import TOMBSTONE, DEFAULT_WAL
 
 if TYPE_CHECKING:
-    from write_batch import WriteBatch
     from pathlib import Path
 
-
-class SeqNum:
-    """Monotonically increasing sequencer generator."""
-
-    #: Last sequence number
-    _value: int
-
-    def __init__(self, value: int = 0):
-        self._value = value
-
-    def increment(self):
-        self._value += 1
-
-    def __int__(self) -> int:
-        return self._value
+    from write_batch import WriteBatch
 
 
 class BaseStore(ABC):

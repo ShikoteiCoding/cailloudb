@@ -5,7 +5,6 @@ import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
 
-
 _CRC = struct.Struct(">I")
 _PLEN = struct.Struct(">H")
 _SEQ = struct.Struct(">Q")

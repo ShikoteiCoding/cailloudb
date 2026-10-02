@@ -1,5 +1,6 @@
 import struct
 from typing import Iterator
+
 from constants import TOMBSTONE
 
 
