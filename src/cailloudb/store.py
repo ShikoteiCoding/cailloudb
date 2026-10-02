@@ -1,12 +1,15 @@
 import bisect
-import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
+from constants import DEFAULT_WAL, TOMBSTONE
 from custom_types import SeqNum
 from index import KeyIndex
+from wal import Wal
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from write_batch import WriteBatch
 
 
@@ -61,19 +64,24 @@ class InMemoryStore(BaseStore):
     #: Sorted key index for live range scans
     __index: KeyIndex
 
-    def __init__(self):
+    #: Write-ahead log
+    _wal: Wal
+
+    def __init__(self, wal_path: Path = DEFAULT_WAL):
         super().__init__()
 
         self.__d = {}
         self.__index = KeyIndex()
         self._seq = SeqNum()
 
+        self._wal = Wal(wal_path)
+
     def _resolve_at(self, key: bytes, max_seq: int) -> bytes:
         if key not in self.__d:
             raise KeyError("key {} not found".format(key))
 
         for event in reversed(self.__d[key]):
-            if event["seq"] > max_seq:
+            if event["seq"] >= max_seq:
                 continue
             if "bytes" in event:
                 return event["bytes"]
@@ -97,29 +105,43 @@ class InMemoryStore(BaseStore):
     async def get_at(self, key: bytes, max_seq: int) -> bytes:
         return self._resolve_at(key, max_seq)
 
-    async def put(self, key: bytes, val: bytes):
-        self._seq.increment()
+    def _apply_put(self, key: bytes, seq_num: int, value: bytes):
         if key not in self.__d:
             self.__d[key] = []
             self.__index.insert(key)
 
-        self.__d[key].append(
-            {"seq": int(self._seq), "bytes": val, "timestamp": int(time.time())}
-        )
+        self.__d[key].append({"seq": seq_num, "bytes": value})
+        self._seq.increment()
+
+    def _apply_delete(self, key: bytes, seq_num: int):
+        self.__d[key].append({"seq": seq_num})
+        self.__index.remove(key)
+        self._seq.increment()
+
+    async def put(self, key: bytes, value: bytes):
+        if not isinstance(value, bytes):
+            raise ValueError("Type {} invalid for value.".format(type(value)))
+        if not isinstance(key, bytes):
+            raise KeyError("Type {} invalid for key.".format(type(key)))
+        seq_num = int(self._seq)
+        await self._wal.append(key, seq_num, value)
+        self._apply_put(key, seq_num, value)
 
     async def delete(self, key: bytes):
         await self.get(key)
-
-        self._seq.increment()
-        self.__d[key].append({"seq": int(self._seq), "timestamp": int(time.time())})
-        self.__index.remove(key)
+        seq_num = int(self._seq)
+        await self._wal.append(key, seq_num, b"")
+        self._apply_delete(key, seq_num)
 
     async def write(self, batch: WriteBatch):
-        for key, val in batch:
-            if val:
-                await self.put(key, val)
+        seq_num = int(self._seq)
+        batch._sync_header(seq_num)
+        await self._wal.append(batch, seq_num)
+        for i, (key, value) in enumerate(batch):
+            if value == TOMBSTONE:
+                self._apply_delete(key, seq_num + i)
             else:
-                await self.delete(key)
+                self._apply_put(key, seq_num + i, value)
 
     async def exists(self, key: bytes) -> bool:
         return self._exists_at(key, int(self._seq))

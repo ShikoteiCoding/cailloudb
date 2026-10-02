@@ -1,3 +1,4 @@
+from constants import MEMTABLE_MAX_BYTES_SIZE
 from custom_types import TOMBSTONE
 from lsm.skiplist import SkipList
 
@@ -9,7 +10,7 @@ class MemTable:
     A simple wrapper around `lsm.skiplist.SkipList`
     """
 
-    def __init__(self, max_bytes_size: int = 32 * 1024 * 1024):
+    def __init__(self, max_bytes_size: int = MEMTABLE_MAX_BYTES_SIZE):
         self.skiplist = SkipList()
         self.max_bytes_size = max_bytes_size
 
