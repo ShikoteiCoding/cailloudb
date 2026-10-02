@@ -98,8 +98,8 @@ async def test_append_after_clear(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_store_put_and_delete_append_to_wal(monkeypatch):
-    store = InMemoryStore()
+async def test_store_put_and_delete_append_to_wal(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"a", b"1")
     await store.put(b"b", b"2")
@@ -114,8 +114,8 @@ async def test_store_put_and_delete_append_to_wal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_store_write_appends_one_batch_record(monkeypatch):
-    store = InMemoryStore()
+async def test_store_write_appends_one_batch_record(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     batch = WriteBatch()
     batch.put(b"a", b"1")
     batch.put(b"b", b"2")
@@ -173,7 +173,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
     await wal.append(b"b", 1, b"2")
     await wal.append(b"a", 2, b"")
 
-    store = InMemoryStore()
+    store = InMemoryStore(tmp_path / "wal")
     async for key, _, val in wal.recover():
         if val:
             await store.put(key, val)

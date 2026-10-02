@@ -8,7 +8,7 @@ A very slow embedded key-valye store API - single node - single-writer. Aim to b
 - Basic CRUD operations (in memory)
 - Atomic batch write (in memory)
 - Disk-backed (to come)
-- Write-ahead log on disk
+- Disk WAL (to come)
 - LSM-tree (to come)
 - Compaction API (to come)
 - Multi-tiers API (to come)
@@ -74,11 +74,6 @@ classDiagram
     get(key: bytes) bytes
     put(key: bytes, val: bytes)
   }
-  class Wal {
-    append()
-    recover()
-    clear()
-  }
   class Store {
     delete(key: bytes)*
     exists(key: bytes)* bool
@@ -86,7 +81,6 @@ classDiagram
     put(key: bytes, val: bytes)*
   }
   InMemoryStore --|> Store
-  InMemoryStore --> Wal : wal
   Store --o Db : store
   Store --o DbBuilder : store
   Store --o DbSnapshot : store

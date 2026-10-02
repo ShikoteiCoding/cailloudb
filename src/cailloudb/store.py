@@ -1,16 +1,14 @@
 import bisect
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from index import KeyIndex
 from wal import Wal
-from constants import TOMBSTONE
+from constants import TOMBSTONE, DEFAULT_WAL
 
 if TYPE_CHECKING:
     from write_batch import WriteBatch
-
-_DEFAULT_WAL = Path("cailloudb-data") / "wal"
+    from pathlib import Path
 
 
 class SeqNum:
@@ -83,12 +81,13 @@ class InMemoryStore(BaseStore):
     #: Write-ahead log
     _wal: Wal
 
-    def __init__(self, wal_path: Path = _DEFAULT_WAL):
+    def __init__(self, wal_path: Path = DEFAULT_WAL):
         super().__init__()
 
         self.__d = {}
         self.__index = KeyIndex()
         self._seq = SeqNum()
+
         self._wal = Wal(wal_path)
 
     def _resolve_at(self, key: bytes, max_seq: int) -> bytes:
