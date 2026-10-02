@@ -1,6 +1,6 @@
-from cailloudb.custom_types import TOMBSTONE
+from cailloudb.constants import TOMBSTONE
 from cailloudb.lsm.memtable import MemTable
-from cailloudb.lsm.skiplist import _LEN_SEQUENCE_NUM
+from cailloudb.lsm.skiplist import LEN_SEQUENCE_NUM
 
 
 def test_memtable_put_and_get():
@@ -9,7 +9,7 @@ def test_memtable_put_and_get():
     memtable.put(b"key1", 0, b"val1")
 
     assert len(memtable) == 1
-    assert memtable.bytes_size == len(b"key1") + len(b"val1") + _LEN_SEQUENCE_NUM
+    assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert memtable.get(b"key1") == b"val1"
     assert memtable.get(b"key2") is None
 
@@ -20,7 +20,7 @@ def test_memtable_put_and_delete():
     memtable.put(b"key1", 0, b"val1")
 
     assert len(memtable) == 1
-    assert memtable.bytes_size == len(b"key1") + len(b"val1") + _LEN_SEQUENCE_NUM
+    assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert memtable.get(b"key1") == b"val1"
     assert memtable.get(b"key2") is None
 
@@ -28,10 +28,10 @@ def test_memtable_put_and_delete():
     assert len(memtable) == 2
     assert memtable.bytes_size == (
         len(b"key1")
-        + _LEN_SEQUENCE_NUM
+        + LEN_SEQUENCE_NUM
         + len(b"val1")
         + len(b"key1")
-        + _LEN_SEQUENCE_NUM
+        + LEN_SEQUENCE_NUM
         + len(TOMBSTONE)
     )
     assert memtable.get(b"key1") == TOMBSTONE

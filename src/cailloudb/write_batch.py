@@ -35,6 +35,7 @@ class WriteBatch:
     #: sequence (8B) + count (4B) + encoded operations
     _buf: bytearray
 
+    # Count of operations in the batch
     count: int
 
     def __init__(self):

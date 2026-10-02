@@ -1,4 +1,17 @@
-TOMBSTONE = b"__INTERNAL_TOMBSTONE_MARKER__"
+import struct
+from typing import TypedDict
+
+
+class MemTableEntry(TypedDict):
+    key: bytes
+    seq_num: int
+    value: bytes
+
+
+class SSTableEntry(TypedDict):
+    key: bytes
+    seq_num: int
+    value: bytes
 
 
 class SeqNum:
