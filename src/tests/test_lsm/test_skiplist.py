@@ -6,59 +6,50 @@ from cailloudb.lsm.skiplist import SkipList
 
 
 @pytest.fixture
-def skiplist():
+def skiplist() -> SkipList:
     return SkipList(max_level=3, p=0.5)
 
 
-def test_skiplist_initial_state(skiplist):
+def test_skiplist_initial_state(skiplist: SkipList):
     assert skiplist.level == 0
     assert skiplist._size == 0
     assert len(skiplist.header.forward) == skiplist.max_level + 1
-    # All header pointers should be None
     assert all(ptr is None for ptr in skiplist.header.forward)
 
 
-def test_skiplist_put_and_get(skiplist: SkipList):
-    skiplist.put(b"key1", b"val1")
+def test_skiplist_insert_and_get(skiplist: SkipList):
+    skiplist.insert(b"key1", 0, b"val1")
     initial_level = skiplist.level
     initial_size = skiplist._size
 
     assert len(skiplist) == 1 == initial_size
     assert skiplist.level == initial_level
 
-    assert skiplist.get(b"key1") == b"val1"
+    assert skiplist.get(b"key1") == (0, b"val1")
     assert skiplist.get(b"key2") is None
 
 
-def test_skiplist_put_and_update(skiplist: SkipList):
-    skiplist.put(b"key1", b"val1")
+def test_skiplist_insert_same_key(skiplist: SkipList):
+    skiplist.insert(b"key1", 0, b"val1")
     initial_level = skiplist.level
     initial_size = skiplist._size
 
     assert len(skiplist) == 1 == initial_size
     assert skiplist.level == initial_level
 
-    # Keep original node ref before updating
-    original_node = skiplist.header.forward[0]
+    skiplist.insert(b"key1", 1, b"val2")
 
-    skiplist.put(b"key1", b"val2")
-
-    # Kept unchanged
-    assert len(skiplist) == 1 == initial_size
-    assert skiplist._size == initial_size
-
-    # Compare updated node ref with original ref
-    updated_node = skiplist.header.forward[0]
-    assert updated_node is original_node
-    assert updated_node.value == b"val2"
+    # Size has increased because of insert
+    assert len(skiplist) == 2 == initial_size + 1
+    assert skiplist.get(b"key1") == (1, b"val2")
 
 
 @patch.object(SkipList, "_random_level", return_value=0)
-def test_skiplist_put_new_node_level_0(mock_random, skiplist: SkipList):
+def test_skiplist_insert_new_node_level_0(mock_random, skiplist: SkipList):
     """
     Test inserting a node that gets assigned level 0 each time.
     """
-    skiplist.put(b"key1", b"val1")
+    skiplist.insert(b"key1", 0, b"val1")
 
     assert skiplist._size == 1
     assert skiplist.level == 0
@@ -68,6 +59,7 @@ def test_skiplist_put_new_node_level_0(mock_random, skiplist: SkipList):
     assert node is not None
     assert node.key == b"key1"
     assert node.value == b"val1"
+    assert node.seq_num == 0
 
     # The node's forward pointer should be None
     assert node.forward[0] is None
@@ -78,7 +70,7 @@ def test_skiplist_put_new_node_level_0(mock_random, skiplist: SkipList):
 @patch.object(SkipList, "_random_level", return_value=2)
 def test_skiplist_level_expansion(mock_random, skiplist: SkipList):
     """Test scenario where new level is assigned"""
-    skiplist.put(b"key1", b"val1")
+    skiplist.insert(b"key1", 0, b"val1")
 
     # SkipList level should expand to 2
     assert len(skiplist) == 1
@@ -108,10 +100,10 @@ def test_skiplist_complex_pointer_routing(mock_random, skiplist: SkipList):
     L1: Header -> B -> C -> None
     L0: Header -> A -> B -> C -> D -> None
     """
-    skiplist.put(b"A", b"valA")
-    skiplist.put(b"B", b"valB")
-    skiplist.put(b"C", b"valC")
-    skiplist.put(b"D", b"valD")
+    skiplist.insert(b"A", 0, b"valA")
+    skiplist.insert(b"B", 1, b"valB")
+    skiplist.insert(b"C", 2, b"valC")
+    skiplist.insert(b"D", 3, b"valD")
 
     assert skiplist._size == 4
     assert skiplist.level == 2
@@ -145,9 +137,9 @@ def test_skiplist_put_out_of_order_insertion(mock_random, skiplist: SkipList):
     """
     Test that nodes inserted in reverse order still preserve key ordering.
     """
-    skiplist.put(b"Z", b"valZ")
-    skiplist.put(b"M", b"valM")
-    skiplist.put(b"A", b"valA")
+    skiplist.insert(b"Z", 0, b"valZ")
+    skiplist.insert(b"M", 1, b"valM")
+    skiplist.insert(b"A", 2, b"valA")
 
     # L0 traversal should yield A -> M -> Z
     curr = skiplist.header.forward[0]
