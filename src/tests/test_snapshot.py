@@ -4,23 +4,24 @@ from cailloudb import Db, DbBuilder, InMemoryStore
 
 
 @pytest.mark.asyncio
-async def test_snapshot_get():
-    store = InMemoryStore()
+async def test_snapshot_get(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
-    await db.put(b"k", b"v1")
+    await db.put(b"key1", b"val1")
+
     snap = db.snapshot()
-
-    await db.put(b"k", b"v2")
-
     assert await snap.latest_sequence_number() == 1
-    assert await snap.get(b"k") == b"v1"
-    assert await db.get(b"k") == b"v2"
+
+    await db.put(b"key1", b"val2")
+
+    assert await snap.get(b"key1") == b"val1"
+    assert await db.get(b"key1") == b"val2"
 
 
 @pytest.mark.asyncio
-async def test_snapshot_exists():
-    store = InMemoryStore()
+async def test_snapshot_exists(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     snap = db.snapshot()
 
@@ -33,8 +34,8 @@ async def test_snapshot_exists():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_delete_replay():
-    store = InMemoryStore()
+async def test_snapshot_delete_replay(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
     await db.put(b"k", b"v1")
@@ -47,8 +48,8 @@ async def test_snapshot_delete_replay():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_reput():
-    store = InMemoryStore()
+async def test_snapshot_reput(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
     await db.put(b"b", b"2")
@@ -61,8 +62,8 @@ async def test_snapshot_reput():
 
 
 @pytest.mark.asyncio
-async def test_snapshot_scan():
-    store = InMemoryStore()
+async def test_snapshot_scan(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
     await db.put(b"b", b"2")
@@ -79,8 +80,8 @@ async def test_snapshot_scan():
 
 
 @pytest.mark.asyncio
-async def test_dbbuilder_snapshot():
-    store = InMemoryStore()
+async def test_dbbuilder_snapshot(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder("test-db", store).build()
 
     await db.put(b"k", b"v")
@@ -90,8 +91,8 @@ async def test_dbbuilder_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_scan_same_on_db_and_reader():
-    store = InMemoryStore()
+async def test_scan_same_on_db_and_reader(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -109,8 +110,8 @@ async def test_scan_same_on_db_and_reader():
 
 
 @pytest.mark.asyncio
-async def test_scan_same_range_semantics_on_snapshot():
-    store = InMemoryStore()
+async def test_scan_same_range_semantics_on_snapshot(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
     await db.put(b"b", b"2")

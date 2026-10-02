@@ -5,8 +5,8 @@ from cailloudb import DbBuilder, InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio
-async def test_store_get_or_raise():
-    store = InMemoryStore()
+async def test_store_get_or_raise(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -22,8 +22,8 @@ async def test_store_get_or_raise():
 
 
 @pytest.mark.asyncio
-async def test_store_delete_or_raise():
-    store = InMemoryStore()
+async def test_store_delete_or_raise(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -40,8 +40,8 @@ async def test_store_delete_or_raise():
 
 
 @pytest.mark.asyncio
-async def test_store_exist():
-    store = InMemoryStore()
+async def test_store_exist(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -53,8 +53,8 @@ async def test_store_exist():
 
 
 @pytest.mark.asyncio
-async def test_store_write_batch():
-    store = InMemoryStore()
+async def test_store_write_batch(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
     batch = WriteBatch()
@@ -78,8 +78,8 @@ async def test_store_write_batch():
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_scan():
-    store = InMemoryStore()
+async def test_in_memory_store_scan(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"b", b"2")

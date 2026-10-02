@@ -1,77 +1,93 @@
 import struct
 from typing import Iterator
 
-PUT_BYTE = 0
-DEL_BYTE = 1
+from constants import TOMBSTONE
 
 
 class WriteBatch:
     """
-    WriteBatch accumulates puts / deletes to be applied atomically.
+    WriteBatch accumulates puts / deletes to be applied atomically
 
-    Keeps operations ordering.
+    Keeps operations ordering
 
-    Encoding (per record):
-      [1 byte op_type]
-      [4 bytes key length][key bytes]
-      [4 bytes val length][val bytes]
+    Payload :
+      [8 bytes sequence number][4 bytes record count]
+      then each operation:
+        [1 byte op type][4 bytes key length][4 bytes val length][key bytes][val bytes]
+
+    Op type is a put, a delete, or a merge
+    A delete yields TOMBSTONE
+    The sequence number is the first operation
+    A batch of two operations uses that sequence and the next one
     """
 
-    #: Buffer (for later compatibility with WAL)
+    # TODO: replace 4-byte key/value lengths with a cheaper encoding
+    # TODO: single-op WAL records have no batch header, decide if that path stays
+
+    _SEQ = struct.Struct(">Q")
+    _COUNT = struct.Struct(">I")
+    _LEN = struct.Struct(">I")
+    _HEADER = 12
+
+    _PUT_BYTE = 0
+    _DEL_BYTE = 1
+
+    #: sequence (8B) + count (4B) + encoded operations
     _buf: bytearray
 
-    _count: int
-
-    # Size of a key / value size - 4 bytes unsigned int
-    _LEN = struct.Struct(">I")
+    count: int
 
     def __init__(self):
-        self._buf = bytearray()
-        self._count = 0
+
+        self._buf = bytearray(self._HEADER)
+        self.count = 0
+
+    def _sync_header(self, seq_num: int):
+        self._buf[0:8] = self._SEQ.pack(seq_num)
+        self._buf[8:12] = self._COUNT.pack(self.count)
 
     def put(self, key: bytes, val: bytes):
-        encoded = (
-            bytes([PUT_BYTE])
+        self._buf += (
+            bytes([self._PUT_BYTE])
             + self._LEN.pack(len(key))
-            + key
             + self._LEN.pack(len(val))
+            + key
             + val
         )
-        self._buf += encoded
-        self._count += 1
+        self.count += 1
 
     def delete(self, key: bytes):
-        encoded = bytes([DEL_BYTE]) + self._LEN.pack(len(key)) + key
-        self._buf += encoded
-        self._count += 1
+        self._buf += (
+            bytes([self._DEL_BYTE]) + self._LEN.pack(len(key)) + self._LEN.pack(0) + key
+        )
+        self.count += 1
 
     def clear(self):
-        self._buf.clear()
-        self._count = 0
+        self._buf = bytearray(self._HEADER)
+        self.count = 0
 
-    def __iter__(self) -> Iterator[tuple[bytes, bytes | None]]:
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         buf = self._buf
-        offset = 0
+        offset = self._HEADER
         n = len(buf)
         while offset < n:
             op = buf[offset]
             offset += 1
             (key_len,) = self._LEN.unpack_from(buf, offset)
             offset += 4
+            (val_len,) = self._LEN.unpack_from(buf, offset)
+            offset += 4
             key = bytes(buf[offset : offset + key_len])
             offset += key_len
+            val = bytes(buf[offset : offset + val_len])
+            offset += val_len
 
-            if op == 0:
-                (val_len,) = self._LEN.unpack_from(buf, offset)
-                offset += 4
-                val = bytes(buf[offset : offset + val_len])
-                offset += val_len
-
-                yield key, val
+            if op == self._DEL_BYTE:
+                yield key, TOMBSTONE
             else:
-                yield key, None
+                yield key, val
 
-            self._count -= 1
+            self.count -= 1
 
     def __len__(self) -> int:
-        return self._count
+        return self.count

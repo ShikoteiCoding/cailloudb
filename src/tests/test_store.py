@@ -4,8 +4,8 @@ from cailloudb import InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_get_or_raise():
-    store = InMemoryStore()
+async def test_in_memory_store_get_or_raise(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"test1", b"val1")
     assert await store.get(b"test1") == b"val1"
@@ -20,8 +20,8 @@ async def test_in_memory_store_get_or_raise():
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_delete_or_raise():
-    store = InMemoryStore()
+async def test_in_memory_store_delete_or_raise(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"test1", b"val1")
     await store.put(b"test2", b"val2")
@@ -37,8 +37,8 @@ async def test_in_memory_store_delete_or_raise():
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_exist():
-    store = InMemoryStore()
+async def test_in_memory_store_exist(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"test1", b"val1")
 
@@ -49,8 +49,8 @@ async def test_in_memory_store_exist():
 
 
 @pytest.mark.asyncio
-async def test_store_write_batch():
-    store = InMemoryStore()
+async def test_store_write_batch(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     batch = WriteBatch()
 
     batch.put(b"test1", b"val1")
@@ -72,8 +72,8 @@ async def test_store_write_batch():
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_scan():
-    store = InMemoryStore()
+async def test_in_memory_store_scan(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"b", b"2")
     await store.put(b"a", b"1")
@@ -92,3 +92,15 @@ async def test_in_memory_store_scan():
 
     items = [item async for item in store.scan()]
     assert items == [(b"a", b"1"), (b"c", b"3")]
+
+
+@pytest.mark.asyncio
+async def test_put_rejects_none_value(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    with pytest.raises(ValueError):
+        await store.put(b"a", None)  # type: ignore
+
+    assert await store.latest_sequence_number() == 0
+    records = [record async for record in store._wal.recover()]
+    assert records == []

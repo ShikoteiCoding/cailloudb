@@ -4,8 +4,8 @@ from cailloudb import Db, InMemoryStore
 
 
 @pytest.mark.asyncio
-async def test_dbreader_get():
-    store = InMemoryStore()
+async def test_dbreader_get(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -17,8 +17,8 @@ async def test_dbreader_get():
 
 
 @pytest.mark.asyncio
-async def test_dbreader_exists():
-    store = InMemoryStore()
+async def test_dbreader_exists(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -29,8 +29,8 @@ async def test_dbreader_exists():
 
 
 @pytest.mark.asyncio
-async def test_dbreader_scan():
-    store = InMemoryStore()
+async def test_dbreader_scan(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -46,8 +46,8 @@ async def test_dbreader_scan():
 
 
 @pytest.mark.asyncio
-async def test_dbreader_sees_db_writes():
-    store = InMemoryStore()
+async def test_dbreader_sees_db_writes(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -64,8 +64,8 @@ async def test_dbreader_sees_db_writes():
 
 
 @pytest.mark.asyncio
-async def test_dbreader_latest_sequence_number():
-    store = InMemoryStore()
+async def test_dbreader_latest_sequence_number(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
     reader = db.reader()
 
@@ -78,8 +78,8 @@ async def test_dbreader_latest_sequence_number():
 
 
 @pytest.mark.asyncio
-async def test_db_reader_shares_store():
-    store = InMemoryStore()
+async def test_db_reader_shares_store(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
     reader_a = db.reader()
