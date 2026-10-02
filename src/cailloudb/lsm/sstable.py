@@ -1,17 +1,16 @@
 import io
-import struct
 from pathlib import Path
 
 from constants import (
-    _DELETED_STRUCT,
-    _KEY_LEN_STRUCT,
-    _LEN_DELETED,
-    _LEN_KEY_LEN,
-    _LEN_SEQUENCE_NUM,
-    _LEN_VAL_LEN,
-    _SEQ_STRUCT,
-    _VAL_LEN_STRUCT,
+    DELETED_STRUCT,
+    KEY_LEN_STRUCT,
+    LEN_DELETED,
+    LEN_KEY_LEN,
+    LEN_SEQUENCE_NUM,
+    LEN_VAL_LEN,
+    SEQ_STRUCT,
     TOMBSTONE,
+    VAL_LEN_STRUCT,
 )
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
@@ -24,7 +23,7 @@ class SSTableWriter:
     Encoding for each entry:
         [4 bytes key length][key bytes]
         [8 bytes for sequence number]
-        [2 bytes for tombstone bool]
+        [1 byte for deleted bool]
         [4 bytes val length][val bytes] <- Can be empty
     """
 
@@ -40,42 +39,42 @@ class SSTableWriter:
         val_len = 0 if is_tombstone else len(value)
 
         total_size = (
-            _LEN_KEY_LEN
+            LEN_KEY_LEN
             + len(key)
-            + _LEN_SEQUENCE_NUM
-            + _LEN_DELETED
-            + (_LEN_VAL_LEN if val_len > 0 else 0)
+            + LEN_SEQUENCE_NUM
+            + LEN_DELETED
+            + (LEN_VAL_LEN if val_len > 0 else 0)
             + val_len
         )
         buf = bytearray(total_size)
 
         # Pack key length
-        _KEY_LEN_STRUCT.pack_into(buf, 0, len(key))
-        offset = _LEN_KEY_LEN
+        KEY_LEN_STRUCT.pack_into(buf, 0, len(key))
+        offset = LEN_KEY_LEN
 
         # Pack key
         buf[offset : offset + len(key)] = key
         offset += len(key)
 
         # Pack sequence number
-        _SEQ_STRUCT.pack_into(buf, offset, seq_num)
-        offset += _LEN_SEQUENCE_NUM
+        SEQ_STRUCT.pack_into(buf, offset, seq_num)
+        offset += LEN_SEQUENCE_NUM
 
         # Pack tombstone bool
-        _DELETED_STRUCT.pack_into(buf, offset, int(is_tombstone))
-        offset += _LEN_DELETED
+        DELETED_STRUCT.pack_into(buf, offset, int(is_tombstone))
+        offset += LEN_DELETED
 
         # Pack value (if tombstone pack nothing)
         if val_len > 0:
-            _VAL_LEN_STRUCT.pack_into(buf, offset, val_len)
-            offset += _LEN_VAL_LEN
+            VAL_LEN_STRUCT.pack_into(buf, offset, val_len)
+            offset += LEN_VAL_LEN
             buf[offset : offset + val_len] = value
 
         return buf, total_size
 
     def write(self, memtable: MemTable) -> SSTable:
         """
-        Write each MemTableEntries of the MemTable to destination.
+        Write each MemTableEntry of the MemTable to destination.
         """
         # Keep track of offset of each records for fast lookup
         offsets = []
@@ -92,7 +91,6 @@ class SSTableWriter:
 
             offset += total_size
 
-        # Debetable
         file.seek(0)
         if self.in_memory:
             return InMemorySSTable(file=file, path=path, offsets=offsets)
@@ -120,25 +118,25 @@ class SSTable:
             self.file.seek(offset)
 
             # Read key
-            key_len_bytes = self.file.read(_LEN_KEY_LEN)
-            key_len = _KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
+            key_len_bytes = self.file.read(LEN_KEY_LEN)
+            key_len = KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
             key = self.file.read(key_len)
 
             # Read sequence number
-            seq_num_bytes = self.file.read(_LEN_SEQUENCE_NUM)
-            seq_num = int(_SEQ_STRUCT.unpack(seq_num_bytes)[0])
+            seq_num_bytes = self.file.read(LEN_SEQUENCE_NUM)
+            seq_num = int(SEQ_STRUCT.unpack(seq_num_bytes)[0])
 
             # Read deleted flag
-            is_deleted_bytes = self.file.read(_LEN_DELETED)
-            is_deleted = _DELETED_STRUCT.unpack(is_deleted_bytes)[0]
+            is_deleted_bytes = self.file.read(LEN_DELETED)
+            is_deleted = DELETED_STRUCT.unpack(is_deleted_bytes)[0]
 
             # Read value / tombstone
             if is_deleted:
                 yield SSTableEntry(key=key, seq_num=seq_num, value=TOMBSTONE)
 
             else:
-                val_len_bytes = self.file.read(_LEN_VAL_LEN)
-                val_len = _VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
+                val_len_bytes = self.file.read(LEN_VAL_LEN)
+                val_len = VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
                 val = self.file.read(val_len)
                 yield SSTableEntry(key=key, seq_num=seq_num, value=val)
 
@@ -156,26 +154,26 @@ class SSTable:
             self.file.seek(offset)
 
             # Unpack key length
-            key_len_bytes = self.file.read(_LEN_KEY_LEN)
-            key_len = _KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
+            key_len_bytes = self.file.read(LEN_KEY_LEN)
+            key_len = KEY_LEN_STRUCT.unpack(key_len_bytes)[0]
 
             # Read key
             table_key = self.file.read(key_len)
 
             if key == table_key:
                 #  Read sequence number
-                seq_num_bytes = self.file.read(_LEN_SEQUENCE_NUM)
-                seq_num = int(_SEQ_STRUCT.unpack(seq_num_bytes)[0])
+                seq_num_bytes = self.file.read(LEN_SEQUENCE_NUM)
+                seq_num = int(SEQ_STRUCT.unpack(seq_num_bytes)[0])
 
                 # Read deleted flag
-                is_deleted_bytes = self.file.read(_LEN_DELETED)
-                is_deleted = _DELETED_STRUCT.unpack(is_deleted_bytes)[0]
+                is_deleted_bytes = self.file.read(LEN_DELETED)
+                is_deleted = DELETED_STRUCT.unpack(is_deleted_bytes)[0]
                 if is_deleted:
                     return SSTableEntry(key=key, seq_num=seq_num, value=TOMBSTONE)
 
                 # Unpack value length
-                val_len_bytes = self.file.read(_LEN_VAL_LEN)
-                val_len = _VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
+                val_len_bytes = self.file.read(LEN_VAL_LEN)
+                val_len = VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
                 val = self.file.read(val_len)
                 return SSTableEntry(key=key, seq_num=seq_num, value=val)
 
