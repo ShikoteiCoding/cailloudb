@@ -1,7 +1,7 @@
 import random
 from typing import Iterator
 
-from constants import _LEN_SEQUENCE_NUM
+from constants import LEN_SEQUENCE_NUM
 from custom_types import MemTableEntry
 
 
@@ -26,12 +26,12 @@ class _SkipNode:
     # the trade-off is runtime cpu
     @property
     def key(self) -> bytes:
-        return self.composite_key[:-_LEN_SEQUENCE_NUM]
+        return self.composite_key[:-LEN_SEQUENCE_NUM]
 
     @property
     def seq_num(self) -> int:
         inverted_seq = int.from_bytes(
-            self.composite_key[-_LEN_SEQUENCE_NUM:], byteorder="big"
+            self.composite_key[-LEN_SEQUENCE_NUM:], byteorder="big"
         )
         return int(0xFFFFFFFFFFFFFFFF - inverted_seq)
 
