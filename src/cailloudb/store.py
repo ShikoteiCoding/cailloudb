@@ -76,33 +76,36 @@ class InMemoryStore(BaseStore):
 
         self._wal = Wal(wal_path)
 
-    def _resolve_at(self, key: bytes, max_seq: int) -> bytes:
+    def _resolve_at(self, key: bytes, max_seq: int) -> bytes | None:
         if key not in self.__d:
-            raise KeyError("key {} not found".format(key))
+            return None
 
-        for event in reversed(self.__d[key]):
-            if event["seq"] >= max_seq:
-                continue
-            if "bytes" in event:
-                return event["bytes"]
-            raise KeyError("key {} not found".format(key))
+        for version in reversed(self.__d[key]):
+            if version["seq"] >= max_seq:
+                continue  # move to older versions
+            if "bytes" in version:
+                return version["bytes"]
+            else:
+                return None
 
-        raise KeyError("key {} not found".format(key))
+        return None
 
     def _exists_at(self, key: bytes, max_seq: int) -> bool:
-        try:
-            self._resolve_at(key, max_seq)
-        except KeyError:
-            return False
-        return True
+        value = self._resolve_at(key, max_seq)
+        return True if value else False
 
     def _keys_at(self, max_seq: int) -> list[bytes]:
         return sorted(k for k in self.__d if self._exists_at(k, max_seq))
 
-    async def get(self, key: bytes) -> bytes:
+    async def get(self, key: bytes) -> bytes | None:
+        """
+        Get a key.
+
+        If the key is not found, return None.
+        """
         return self._resolve_at(key, int(self._seq))
 
-    async def get_at(self, key: bytes, max_seq: int) -> bytes:
+    async def get_at(self, key: bytes, max_seq: int) -> bytes | None:
         return self._resolve_at(key, max_seq)
 
     def _apply_put(self, key: bytes, seq_num: int, value: bytes):
@@ -114,11 +117,17 @@ class InMemoryStore(BaseStore):
         self._seq.increment()
 
     def _apply_delete(self, key: bytes, seq_num: int):
+        if key not in self.__d:
+            self.__d[key] = []
+
         self.__d[key].append({"seq": seq_num})
         self.__index.remove(key)
         self._seq.increment()
 
     async def put(self, key: bytes, value: bytes):
+        """
+        Put a key/value pair.
+        """
         if not isinstance(value, bytes):
             raise ValueError("Type {} invalid for value.".format(type(value)))
         if not isinstance(key, bytes):
@@ -128,12 +137,19 @@ class InMemoryStore(BaseStore):
         self._apply_put(key, seq_num, value)
 
     async def delete(self, key: bytes):
-        await self.get(key)
+        """
+        Delete a key.
+
+        If the key doesn't exist, a deletion marker is created nonetheless.
+        """
         seq_num = int(self._seq)
         await self._wal.append(key, seq_num, b"")
         self._apply_delete(key, seq_num)
 
     async def write(self, batch: WriteBatch):
+        """
+        Write a batch of operations a single atomic operation.
+        """
         seq_num = int(self._seq)
         batch._sync_header(seq_num)
         await self._wal.append(batch, seq_num)
@@ -155,7 +171,9 @@ class InMemoryStore(BaseStore):
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         for key in self.__index.range(start, end):
-            yield key, self._resolve_at(key, int(self._seq))
+            value = self._resolve_at(key, int(self._seq))
+            if value:
+                yield key, value
 
     async def scan_at(
         self,
@@ -167,7 +185,9 @@ class InMemoryStore(BaseStore):
         lo = bisect.bisect_left(keys, start) if start is not None else 0
         hi = bisect.bisect_left(keys, end) if end is not None else len(keys)
         for key in keys[lo:hi]:
-            yield key, self._resolve_at(key, max_seq)
+            value = self._resolve_at(key, max_seq)
+            if value:
+                yield key, value
 
     async def latest_sequence_number(self) -> int:
         return int(self._seq)

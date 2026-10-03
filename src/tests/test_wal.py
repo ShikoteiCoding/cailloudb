@@ -180,8 +180,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
             await store.delete(key)
 
     assert await store.get(b"b") == b"2"
-    with pytest.raises(KeyError):
-        await store.get(b"a")
+    assert await store.get(b"a") is None
 
 
 @pytest.mark.asyncio
