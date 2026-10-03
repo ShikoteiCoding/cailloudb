@@ -32,7 +32,7 @@ class MemTable:
         """
         self.skiplist.insert(key, seq_num, TOMBSTONE)
 
-    def get(self, key: bytes) -> bytes | None:
+    def get(self, key: bytes) -> MemTableEntry | None:
         """
         Get a value, tombstone or None from key.
 
@@ -40,10 +40,7 @@ class MemTable:
             None is exclusively returned for non found keys.
             Returns the deletion marker as a valid value.
         """
-        val = self.skiplist.get(key)
-        if val:
-            return val[1]
-        return None
+        return self.skiplist.get(key)
 
     def __iter__(self) -> Iterator[MemTableEntry]:
         for entry in self.skiplist:
