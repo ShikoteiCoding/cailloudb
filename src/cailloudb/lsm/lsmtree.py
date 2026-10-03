@@ -52,7 +52,7 @@ class LSMTree:
             return entry["value"]
 
         # Check SSTables in reverse order
-        # TODO: solve concurrency issue when skiplist are queued for flushing
+        # TODO: solve concurrency issue when memtables are queued for flushing
         # TODO: implement bloom filter
         for sstable in reversed(self.sstables):
             entry = sstable.get(key)
