@@ -158,3 +158,87 @@ def test_skiplist_put_out_of_order_insertion(mock_random, skiplist: SkipList):
 
     # Z should terminate the list
     assert curr.forward[0] is None
+
+
+def test_skiplist_scan_fixed_range(skiplist: SkipList):
+    skiplist.insert(b"key1", 0, b"val1")
+    skiplist.insert(b"key2", 1, b"val2")
+    skiplist.insert(b"key3", 2, b"val3")
+
+    # Test inclusive
+    result = [item for item in skiplist.scan(b"key", b"key4", 2)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+        MemTableEntry(key=b"key3", seq_num=2, value=b"val3"),
+    ]
+
+    # Test excluding start_key
+    result = [item for item in skiplist.scan(b"key2", b"key4", 2)]
+    assert result == [
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+        MemTableEntry(key=b"key3", seq_num=2, value=b"val3"),
+    ]
+
+    # Test excluding end_key
+    result = [item for item in skiplist.scan(b"key1", b"key3", 2)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+    ]
+
+    # Test excluding both
+    result = [item for item in skiplist.scan(b"key2", b"key3", 2)]
+    assert result == [
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+    ]
+
+
+def test_skiplist_scan_unbounded_range(skiplist: SkipList):
+    skiplist.insert(b"key1", 0, b"val1")
+    skiplist.insert(b"key2", 1, b"val2")
+    skiplist.insert(b"key3", 2, b"val3")
+
+    # Test unbounded end_key
+    result = [item for item in skiplist.scan(b"key1", None, 2)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+        MemTableEntry(key=b"key3", seq_num=2, value=b"val3"),
+    ]
+
+    # Test unbounded start_key
+    result = [item for item in skiplist.scan(None, b"key4", 2)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+        MemTableEntry(key=b"key3", seq_num=2, value=b"val3"),
+    ]
+
+    # Test unbounded both
+    result = [item for item in skiplist.scan(None, None, 2)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+        MemTableEntry(key=b"key3", seq_num=2, value=b"val3"),
+    ]
+
+
+def test_skiplist_scan_max_seq(skiplist: SkipList):
+    skiplist.insert(b"key1", 0, b"val1")
+    skiplist.insert(b"key2", 1, b"val2")
+    skiplist.insert(b"key3", 2, b"val3")
+
+    # Test fixed range
+    result = [item for item in skiplist.scan(b"key1", b"key4", 1)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+    ]
+
+    # Test unbounded
+    result = [item for item in skiplist.scan(None, None, 1)]
+    assert result == [
+        MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
+        MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
+    ]

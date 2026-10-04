@@ -2,6 +2,7 @@ import heapq
 from typing import Iterator
 
 from constants import TOMBSTONE
+from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable, SSTableWriter
 
@@ -63,7 +64,7 @@ class LSMTree:
 
         # Tombstone conversion happens here
         if entry:
-            if entry == TOMBSTONE:
+            if entry["value"] == TOMBSTONE:
                 return None
             return entry["value"]
 
@@ -75,7 +76,7 @@ class LSMTree:
 
             # Tombstone conversion happens here
             if entry:
-                if entry == TOMBSTONE:
+                if entry["value"] == TOMBSTONE:
                     return None
                 return entry["value"]
 
@@ -94,52 +95,44 @@ class LSMTree:
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check.
 
-        # Check SSTable in reverse orders
-        # 1. Collect underlying iterators that SEEK directly to start_key
-        # (You must implement .scan(start_key) on MemTable and SSTable)
+        # Get all iterators
         iterators = []
         iterators.append(self.memtable.scan(start_key, end_key, seq_num))
-
         for sst in self.sstables:
             iterators.append(sst.scan(start_key, end_key, seq_num))
 
-        # 2. Wrapper to format entries for Python's min-heap (heapq.merge)
-        def stream_wrapper(iterator):
+        # Aggregator function for whichever iterator
+        def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
             for entry in iterator:
-                if entry.key >= end_key:
+                if end_key is not None and entry["key"] >= end_key:
                     break  # Stop streaming from this component if we pass end_key
 
-                # Yield tuple: (key ASC, -seq_num DESC, value)
-                # By negating the seq_num, Python's native min-heap correctly
-                # surfaces the NEWEST version of a key first!
-                yield (entry.key, -entry.seq_num, entry.value)
+                # Trick, reverse the seq num to ensure last wins
+                yield (entry["key"], -entry["seq_num"], entry["value"])
 
-        # 3. K-Way merge of all sorted streams
-        merged_stream = heapq.merge(*[stream_wrapper(it) for it in iterators])
+        # K-Way merge of all sorted streams
+        merged_stream = heapq.merge(*[iterator_agg(it) for it in iterators])
 
+        # Keep last processed key to avoid dedup
         last_processed_key = None
 
-        # 4. The MVCC Evaluation Loop
+        # For all in-order gathered keys
         for key, neg_seq, value in merged_stream:
             entry_seq = -neg_seq
 
-            # Rule A: Future Gate. If this version was written after our snapshot, skip it.
+            # Skip newer versions
             if entry_seq > seq_num:
                 continue
 
-            # Rule B: Masking (Deduplication). If we already evaluated a version of this key,
-            # it means we already saw a NEWER, valid version. Skip this older historical version.
+            # Skip if key already processed to avoid dedup
             if key == last_processed_key:
                 continue
 
-            # We are now looking at the NEWEST valid version of this key for our snapshot.
-            last_processed_key = key
-
-            # Rule C: Tombstone shadowing. If the latest valid version is a delete marker,
-            # we don't yield it, but we MUST keep last_processed_key updated so that
-            # older versions in SSTables get skipped by Rule B.
+            # Mask internal tombstone to downstream
             if value != TOMBSTONE:
                 yield key, value
+
+            last_processed_key = key
 
     def _rotate_memtable(self) -> None:
         """

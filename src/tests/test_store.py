@@ -18,6 +18,24 @@ async def test_in_memory_store_get_never_raises(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_in_memory_store_get_at_never_raises(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    await store.put(b"test1", b"val1")
+    assert await store.get_at(b"test1", seq_num=0) == b"val1"
+
+    await store.put(b"test2", b"val2")
+    assert await store.get_at(b"test2", seq_num=1) == b"val2"
+    assert await store.get_at(b"test3", seq_num=1) is None
+
+    assert await store.latest_sequence_number() == 2
+
+    assert await store.get_at(b"test2", seq_num=0) is None
+    assert await store.get_at(b"test2", seq_num=1) == b"val2"
+    assert await store.get_at(b"test3", seq_num=0) is None
+
+
+@pytest.mark.asyncio
 async def test_in_memory_store_delete_never_raises(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
 
@@ -31,18 +49,6 @@ async def test_in_memory_store_delete_never_raises(tmp_path):
     assert await store.get(b"test1") is None
 
     assert await store.latest_sequence_number() == 4
-
-
-@pytest.mark.asyncio
-async def test_in_memory_store_exist(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
-
-    await store.put(b"test1", b"val1")
-
-    assert await store.exists(b"test1")
-    assert not await store.exists(b"test2")
-
-    assert await store.latest_sequence_number() == 1
 
 
 @pytest.mark.asyncio
@@ -87,6 +93,29 @@ async def test_in_memory_store_scan(tmp_path):
     await store.delete(b"b")
 
     items = [item async for item in store.scan()]
+    assert items == [(b"a", b"1"), (b"c", b"3")]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_store_scan_at(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    await store.put(b"b", b"2")
+    await store.put(b"a", b"1")
+    await store.put(b"c", b"3")
+
+    items = [item async for item in store.scan_at(seq_num=2)]
+    assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
+
+    items = [item async for item in store.scan_at(b"b", seq_num=2)]
+    assert items == [(b"b", b"2"), (b"c", b"3")]
+
+    items = [item async for item in store.scan_at(b"b", b"c", seq_num=2)]
+    assert items == [(b"b", b"2")]
+
+    await store.delete(b"b")
+
+    items = [item async for item in store.scan_at(seq_num=3)]
     assert items == [(b"a", b"1"), (b"c", b"3")]
 
 

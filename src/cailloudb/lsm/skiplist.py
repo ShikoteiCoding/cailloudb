@@ -171,7 +171,7 @@ class SkipList:
         current = current.forward[0]
         while current is not None:
             if end_key is not None and current.key >= end_key:
-                continue
+                break
 
             if current.seq_num <= seq_num:
                 # Found the last version at or before `seq_num`

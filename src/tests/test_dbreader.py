@@ -16,18 +16,6 @@ async def test_dbreader_get(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dbreader_exists(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
-    reader = db.reader()
-
-    await db.put(b"k", b"v")
-
-    assert await reader.exists(b"k")
-    assert not await reader.exists(b"missing")
-
-
-@pytest.mark.asyncio
 async def test_dbreader_scan(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
@@ -50,7 +38,7 @@ async def test_dbreader_sees_db_writes(tmp_path):
     db = Db(store)
     reader = db.reader()
 
-    assert not await reader.exists(b"k")
+    assert await reader.get(b"k") is None
 
     await db.put(b"k", b"v1")
     assert await reader.get(b"k") == b"v1"
@@ -59,7 +47,7 @@ async def test_dbreader_sees_db_writes(tmp_path):
     assert await reader.get(b"k") == b"v2"
 
     await db.delete(b"k")
-    assert not await reader.exists(b"k")
+    assert await reader.get(b"k") is None
 
 
 @pytest.mark.asyncio
