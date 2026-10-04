@@ -114,7 +114,6 @@ class InMemoryStore(BaseStore):
             self.__index.insert(key)
 
         self.__d[key].append({"seq": seq_num, "bytes": value})
-        self._seq.increment()
 
     def _apply_delete(self, key: bytes, seq_num: int):
         if key not in self.__d:
@@ -122,7 +121,6 @@ class InMemoryStore(BaseStore):
 
         self.__d[key].append({"seq": seq_num})
         self.__index.remove(key)
-        self._seq.increment()
 
     async def put(self, key: bytes, value: bytes):
         """
@@ -135,6 +133,7 @@ class InMemoryStore(BaseStore):
         seq_num = int(self._seq)
         await self._wal.append(key, seq_num, value)
         self._apply_put(key, seq_num, value)
+        self._seq.increment()
 
     async def delete(self, key: bytes):
         """
@@ -145,6 +144,7 @@ class InMemoryStore(BaseStore):
         seq_num = int(self._seq)
         await self._wal.append(key, seq_num, b"")
         self._apply_delete(key, seq_num)
+        self._seq.increment()
 
     async def write(self, batch: WriteBatch):
         """
@@ -157,11 +157,12 @@ class InMemoryStore(BaseStore):
         seq_num = int(self._seq)
         batch.sync_header(seq_num)
         await self._wal.append(batch, seq_num)
-        for i, (key, value) in enumerate(batch):
+        for key, value in batch:
             if value == TOMBSTONE:
-                self._apply_delete(key, seq_num + i)
+                self._apply_delete(key, int(self._seq))
             else:
-                self._apply_put(key, seq_num + i, value)
+                self._apply_put(key, int(self._seq), value)
+            self._seq.increment()
 
     async def exists(self, key: bytes) -> bool:
         return self._exists_at(key, int(self._seq))
