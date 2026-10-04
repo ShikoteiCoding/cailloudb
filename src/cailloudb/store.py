@@ -148,10 +148,14 @@ class InMemoryStore(BaseStore):
 
     async def write(self, batch: WriteBatch):
         """
-        Write a batch of operations a single atomic operation.
+        Write a batch of operations in a single atomic operation.
         """
+        # Assumptions:
+        # - Single writer make this write essentially a blocking operation.
+        # - Failure to apply this method should be retried during system recovery (crash).
+        # - MVCC safeguards readers consistency during write runtime.
         seq_num = int(self._seq)
-        batch._sync_header(seq_num)
+        batch.sync_header(seq_num)
         await self._wal.append(batch, seq_num)
         for i, (key, value) in enumerate(batch):
             if value == TOMBSTONE:

@@ -141,7 +141,7 @@ async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
     batch = WriteBatch()
     batch.put(b"b", b"lyon")
     batch.put(b"c", b"paris")
-    batch._sync_header(2)
+    batch.sync_header(2)
     await wal.append(batch, 2)
 
     records = [record async for record in wal.recover()]
@@ -158,7 +158,7 @@ async def test_append_batch_of_hundreds_of_records(tmp_path):
     batch = WriteBatch()
     for i in range(count):
         batch.put(i.to_bytes(4, "big"), b"v")
-    batch._sync_header(1)
+    batch.sync_header(1)
     await wal.append(batch, 0)
 
     records = [record async for record in wal.recover()]

@@ -77,8 +77,8 @@ async def test_snapshot_scan(tmp_path):
     assert items == [(b"a", b"1"), (b"b", b"2")]
     assert await store.latest_sequence_number() == 4
 
-    # items = [item async for item in db.scan()]
-    # assert items == [(b"a", b"1"), (b"c", b"3")]
+    items = [item async for item in db.scan()]
+    assert items == [(b"a", b"1"), (b"c", b"3")]
 
 
 @pytest.mark.asyncio

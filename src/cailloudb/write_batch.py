@@ -43,7 +43,7 @@ class WriteBatch:
         self._buf = bytearray(self._HEADER)
         self.count = 0
 
-    def _sync_header(self, seq_num: int):
+    def sync_header(self, seq_num: int):
         self._buf[0:8] = self._SEQ.pack(seq_num)
         self._buf[8:12] = self._COUNT.pack(self.count)
 
