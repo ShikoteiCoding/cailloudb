@@ -43,8 +43,7 @@ async def test_snapshot_delete_replay(tmp_path):
     await db.delete(b"k")
 
     assert await snap.get(b"k") == b"v1"
-    with pytest.raises(KeyError):
-        await db.get(b"k")
+    assert await db.get(b"k") is None
 
 
 @pytest.mark.asyncio
@@ -66,14 +65,17 @@ async def test_snapshot_scan(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
     db = Db(store)
 
-    await db.put(b"b", b"2")
     await db.put(b"a", b"1")
+    await db.put(b"b", b"2")
     snap = db.snapshot()
+    assert await snap.latest_sequence_number() == 2
+
     await db.put(b"c", b"3")
     await db.delete(b"b")
 
     items = [item async for item in snap.scan()]
     assert items == [(b"a", b"1"), (b"b", b"2")]
+    assert await store.latest_sequence_number() == 4
 
     items = [item async for item in db.scan()]
     assert items == [(b"a", b"1"), (b"c", b"3")]

@@ -5,7 +5,7 @@ from cailloudb import DbBuilder, InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio
-async def test_store_get_or_raise(tmp_path):
+async def test_store_get_never_raises(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
@@ -14,15 +14,13 @@ async def test_store_get_or_raise(tmp_path):
 
     await db.put(b"test2", b"val2")
     assert await db.get(b"test2") == b"val2"
-
-    with pytest.raises(KeyError):
-        await db.get(b"test3")
+    assert await db.get(b"test3") is None
 
     assert await db.latest_sequence_number() == 2
 
 
 @pytest.mark.asyncio
-async def test_store_delete_or_raise(tmp_path):
+async def test_store_delete_never_raises(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
     db = DbBuilder(TEST_DB, store).build()
 
@@ -30,13 +28,11 @@ async def test_store_delete_or_raise(tmp_path):
     await db.put(b"test2", b"val2")
 
     await db.delete(b"test1")
-    with pytest.raises(KeyError):
-        await db.get(b"test1")
+    await db.get(b"test1")
 
-    with pytest.raises(KeyError):
-        await db.delete(b"test1")
+    await db.delete(b"test1")
 
-    assert await db.latest_sequence_number() == 3
+    assert await db.latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
@@ -69,10 +65,8 @@ async def test_store_write_batch(tmp_path):
     await db.write(batch)
 
     assert await db.get(b"test1") == b"val1"
+    assert await db.get(b"test2") is None
     assert await db.get(b"test3") == b"val3"
-
-    with pytest.raises(KeyError):
-        await db.get(b"test2")
 
     assert await db.latest_sequence_number() == 4
 

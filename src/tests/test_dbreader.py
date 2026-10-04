@@ -12,8 +12,7 @@ async def test_dbreader_get(tmp_path):
     await db.put(b"k", b"v")
     assert await reader.get(b"k") == b"v"
 
-    with pytest.raises(KeyError):
-        await reader.get(b"missing")
+    assert await reader.get(b"missing") is None
 
 
 @pytest.mark.asyncio

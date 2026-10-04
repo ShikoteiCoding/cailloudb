@@ -4,7 +4,7 @@ from cailloudb import InMemoryStore, WriteBatch
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_get_or_raise(tmp_path):
+async def test_in_memory_store_get_never_raises(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
 
     await store.put(b"test1", b"val1")
@@ -12,28 +12,25 @@ async def test_in_memory_store_get_or_raise(tmp_path):
 
     await store.put(b"test2", b"val2")
     assert await store.get(b"test2") == b"val2"
-
-    with pytest.raises(KeyError):
-        await store.get(b"test3")
+    assert await store.get(b"test3") is None
 
     assert await store.latest_sequence_number() == 2
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_delete_or_raise(tmp_path):
+async def test_in_memory_store_delete_never_raises(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
+
+    # Check deletion on non existent key
+    await store.delete(b"test1")
 
     await store.put(b"test1", b"val1")
     await store.put(b"test2", b"val2")
 
     await store.delete(b"test1")
-    with pytest.raises(KeyError):
-        await store.get(b"test1")
+    assert await store.get(b"test1") is None
 
-    with pytest.raises(KeyError):
-        await store.delete(b"test1")
-
-    assert await store.latest_sequence_number() == 3
+    assert await store.latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
@@ -65,8 +62,7 @@ async def test_store_write_batch(tmp_path):
     assert await store.get(b"test1") == b"val1"
     assert await store.get(b"test3") == b"val3"
 
-    with pytest.raises(KeyError):
-        await store.get(b"test2")
+    assert await store.get(b"test2") is None
 
     assert await store.latest_sequence_number() == 4
 
