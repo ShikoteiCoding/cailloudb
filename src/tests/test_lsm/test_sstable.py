@@ -36,8 +36,8 @@ def test_sstable_writer_encode_memtable_entry_tombstone():
 def test_sstable_writer_write_sstable():
     writer = SSTableWriter(in_memory=True)
     memtable = MemTable()
-    memtable.put(key=b"key1", seq_num=1, value=b"val1")
-    memtable.put(key=b"key2", seq_num=2, value=b"val2")
+    memtable.insert(key=b"key1", seq_num=1, value=b"val1")
+    memtable.insert(key=b"key2", seq_num=2, value=b"val2")
 
     result = writer.write(memtable)
 
@@ -51,7 +51,7 @@ def test_sstable_writer_write_sstable():
 def test_sstable_writer_to_disk():
     writer = SSTableWriter(in_memory=False, dir=Path("/tmp/data"))
     memtable = MemTable()
-    memtable.put(key=b"key1", seq_num=1, value=b"val1")
+    memtable.insert(key=b"key1", seq_num=1, value=b"val1")
 
     result = writer.write(memtable)
 
@@ -66,9 +66,9 @@ def test_sstable_get():
     writer = SSTableWriter(in_memory=True)
     memtable = MemTable()
 
-    memtable.put(key=b"apple", seq_num=1, value=b"red")
-    memtable.put(key=b"banana", seq_num=2, value=b"yellow")
-    memtable.put(key=b"cherry", seq_num=3, value=TOMBSTONE)
+    memtable.insert(key=b"apple", seq_num=1, value=b"red")
+    memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
+    memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
 
     sstable = writer.write(memtable)
 
@@ -89,10 +89,10 @@ def test_sstable_iter():
     writer = SSTableWriter(in_memory=True)
     memtable = MemTable()
 
-    memtable.put(key=b"apple", seq_num=1, value=b"red")
-    memtable.put(key=b"banana", seq_num=2, value=b"yellow")
-    memtable.put(key=b"cherry", seq_num=3, value=TOMBSTONE)
-    memtable.put(key=b"lime", seq_num=4, value=b"green")
+    memtable.insert(key=b"apple", seq_num=1, value=b"red")
+    memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
+    memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
+    memtable.insert(key=b"lime", seq_num=4, value=b"green")
 
     sstable = writer.write(memtable)
 

@@ -134,7 +134,7 @@ class SkipList:
         # Iterate through version chain for `key`
         while current is not None and current.key == key:
             if current.seq_num <= seq_num:
-                # Found the newest version at latest before seq_num
+                # Found the last version at or before `seq_num`
                 return MemTableEntry(
                     key=key, seq_num=current.seq_num, value=current.value
                 )
@@ -142,6 +142,44 @@ class SkipList:
             current = current.forward[0]
 
         return None
+
+    def scan(
+        self, start_key: bytes | None, end_key: bytes | None, seq_num: int
+    ) -> Iterator[MemTableEntry]:
+        """
+        Scan values, tombstone or None from key at or before `seq_num`.
+
+        Behavior:
+            start_key is inclusive, end_key is exclusive.
+            Yield MemTableEntry(key, seq_num, value) for the latest valid version.
+            Doesn't yield None (it is not aware of out-of-range keys)
+            Ordering guarantee as the SkipList property
+        """
+        current = self.header
+
+        # Traverse the skiplist top-down / left-to-right
+        if start_key is not None:
+            for i in range(self.level, -1, -1):
+                while (
+                    current.forward[i]
+                    and
+                    # Trick, b"foo" is always less than b"foo\xff..."
+                    current.forward[i].composite_key < start_key
+                ):
+                    current = current.forward[i]
+
+        current = current.forward[0]
+        while current is not None:
+            if end_key is not None and current.key >= end_key:
+                continue
+
+            if current.seq_num <= seq_num:
+                # Found the last version at or before `seq_num`
+                yield MemTableEntry(
+                    key=current.key, seq_num=current.seq_num, value=current.value
+                )
+
+            current = current.forward[0]
 
     def __iter__(self) -> Iterator[MemTableEntry]:
         """
@@ -153,7 +191,6 @@ class SkipList:
 
         Behavior:
             Ordering guarantee as the SkipList property
-            Parse raw bytes to lightweight SkipListEntry typeddict
         """
         current = self.header.forward[0]
 

@@ -4,10 +4,10 @@ from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.skiplist import LEN_SEQUENCE_NUM
 
 
-def test_memtable_put_and_get():
+def test_memtable_insert_and_get():
     memtable = MemTable()
 
-    memtable.put(b"key1", 0, b"val1")
+    memtable.insert(b"key1", 0, b"val1")
 
     assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert len(memtable) == 1
@@ -17,10 +17,10 @@ def test_memtable_put_and_get():
     assert memtable.get(b"key2", 0) is None
 
 
-def test_memtable_put_and_delete():
+def test_memtable_insert_tombstone():
     memtable = MemTable()
 
-    memtable.put(b"key1", 0, b"val1")
+    memtable.insert(b"key1", 0, b"val1")
 
     assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert len(memtable) == 1
@@ -29,7 +29,7 @@ def test_memtable_put_and_delete():
     )
     assert memtable.get(b"key2", 0) is None
 
-    memtable.delete(b"key1", 0)
+    memtable.insert(b"key1", 0, TOMBSTONE)
     assert len(memtable) == 2
     assert memtable.bytes_size == (
         len(b"key1")
@@ -48,5 +48,5 @@ def test_memtable_full():
     memtable = MemTable(max_bytes_size=1)
     assert not memtable.is_full()
 
-    memtable.put(b"key1", 0, b"val1")
+    memtable.insert(b"key1", 0, b"val1")
     assert memtable.is_full()

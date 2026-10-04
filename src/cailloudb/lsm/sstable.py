@@ -1,16 +1,13 @@
 import io
 from pathlib import Path
+from typing import Iterator
 
 from constants import (
-    DELETED_STRUCT,
     KEY_LEN_STRUCT,
     KEY_METADATA_STRUCT,
-    LEN_DELETED,
     LEN_KEY_LEN,
     LEN_KEY_METADATA,
-    LEN_SEQUENCE_NUM,
     LEN_VAL_LEN,
-    SEQ_STRUCT,
     TOMBSTONE,
     VAL_LEN_STRUCT,
 )
@@ -102,7 +99,7 @@ class SSTableWriter:
         offsets = []
         offset = 0
 
-        path = ""
+        path = Path()
         file = io.BytesIO()
 
         for entry in memtable:
@@ -120,10 +117,19 @@ class SSTableWriter:
 
 
 class SSTable:
-    def __init__(self, file: io.BytesIO, path: str, offsets: list[int]):
+    #: Reference to File Buffer object
+    file: io.BytesIO
+
+    #: Path to the file
+    path: Path
+
+    #: List of buffer offset pointers to first char of each records
+    offsets: list[int]
+
+    def __init__(self, file: io.BytesIO, path: Path, offsets: list[int]):
         self.file = file
         self.path = path
-        self.offsets: list[int] = offsets
+        self.offsets = offsets
 
         # TODO: Used as skip filter
         # self.low_key: bytes = low_key
@@ -168,6 +174,10 @@ class SSTable:
     def get(self, key: bytes, seq_num: int) -> SSTableEntry | None:
         """
         Get the latest version of `key` at or before `seq_num`.
+
+        Behavior:
+            Returns None if key is not found.
+            Returns the deletion marker as a valid value.
         """
         # Build a lookup internal key from provided maximum `seq_num``
         inverted_target_seq = (~seq_num) & 0x00FFFFFFFFFFFFFF
@@ -224,11 +234,80 @@ class SSTable:
             key=key, seq_num=entry_seq_num, value=self.file.read(val_len)
         )
 
+    def scan(
+        self, start_key: bytes | None, end_key: bytes | None, seq_num: int
+    ) -> Iterator[SSTableEntry]:
+        """
+        Scan values, tombstone or None from key at or before `seq_num`.
+
+        Behavior:
+            start_key is inclusive, end_key is exclusive.
+            Yield SSTableEntry(key, seq_num, value) for the latest valid version.
+            Doesn't yield None (it is not aware of out-of-range keys)
+            Ordering guarantee as the SSTable property
+            Parse raw bytes to lightweight SSTableEntry typeddict
+        """
+        start_idx = 0
+
+        # Binary search over raw InternalKey byte representations
+        if start_key is not None:
+            target_internal_key = start_key + (b"\x00" * LEN_KEY_METADATA)
+
+            left = 0
+            right = len(self.offsets) - 1
+            start_idx = len(self.offsets)
+
+            while left <= right:
+                mid = (left + right) // 2
+                self.file.seek(self.offsets[mid])
+
+                ik_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
+                entry_ik = self.file.read(ik_len)
+
+                if entry_ik >= target_internal_key:
+                    start_idx = mid
+                    right = mid - 1  # Keep searching left for the true start
+                else:
+                    left = mid + 1
+
+        # Scan Sequentially from start_idx
+        for idx in range(start_idx, len(self.offsets)):
+            self.file.seek(self.offsets[idx])
+
+            ik_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
+            entry_ik = self.file.read(ik_len)
+
+            table_key = entry_ik[:-LEN_KEY_METADATA]
+
+            # Exit if we cross the exclusive end_key (exclusive)
+            if end_key is not None and table_key >= end_key:
+                break
+
+            # Parse the key metadata (seq_num and value_type)
+            key_metadata = KEY_METADATA_STRUCT.unpack(entry_ik[-LEN_KEY_METADATA:])[0]
+            inverted_seq = key_metadata >> 8
+            entry_seq_num = (~inverted_seq) & 0x00FFFFFFFFFFFFFF
+            value_type = key_metadata & 0xFF
+
+            # Ignore newer versions
+            if entry_seq_num > seq_num:
+                continue
+
+            # Yield the entry (tombstone or value)
+            if value_type == 0x0:
+                yield SSTableEntry(
+                    key=table_key, seq_num=entry_seq_num, value=TOMBSTONE
+                )
+            else:
+                val_len = VAL_LEN_STRUCT.unpack(self.file.read(LEN_VAL_LEN))[0]
+                val = self.file.read(val_len)
+                yield SSTableEntry(key=table_key, seq_num=entry_seq_num, value=val)
+
 
 class InMemorySSTable(SSTable):
     """
     In-memory SSTable for `cailloudb.store.InMemoryStore`
     """
 
-    def __init__(self, file: io.BytesIO, path: str, offsets: list[int]):
+    def __init__(self, file: io.BytesIO, path: Path, offsets: list[int]):
         super().__init__(file, path, offsets)
