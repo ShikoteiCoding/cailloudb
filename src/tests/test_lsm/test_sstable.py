@@ -5,13 +5,18 @@ import pytest
 from cailloudb.constants import TOMBSTONE
 from cailloudb.custom_types import MemTableEntry, SSTableEntry
 from cailloudb.lsm.memtable import MemTable
-from cailloudb.lsm.sstable import InMemorySSTable, SSTable, SSTableWriter
+from cailloudb.lsm.sstable import (
+    InMemorySSTable,
+    SSTable,
+    SSTableWriter,
+    encode_memtable_entry,
+)
 
 
 def test_sstable_writer_encode_memtable_entry_standard():
     entry = MemTableEntry(**{"key": b"key1", "seq_num": 1, "value": b"val1"})
 
-    buf, size = SSTableWriter.encode_memtable_entry(entry)
+    buf, size = encode_memtable_entry(entry)
 
     assert isinstance(buf, bytearray)
     assert size == len(buf)
@@ -21,7 +26,7 @@ def test_sstable_writer_encode_memtable_entry_standard():
 def test_sstable_writer_encode_memtable_entry_tombstone():
     entry = MemTableEntry(**{"key": b"key1", "seq_num": 1, "value": TOMBSTONE})
 
-    buf, size = SSTableWriter.encode_memtable_entry(entry)
+    buf, size = encode_memtable_entry(entry)
 
     assert isinstance(buf, bytearray)
     assert size == len(buf)
@@ -67,13 +72,15 @@ def test_sstable_get():
 
     sstable = writer.write(memtable)
 
-    assert sstable.get(b"apple") == SSTableEntry(key=b"apple", seq_num=1, value=b"red")
-    assert sstable.get(b"banana") == SSTableEntry(
+    assert sstable.get(b"apple", 3) == SSTableEntry(
+        key=b"apple", seq_num=1, value=b"red"
+    )
+    assert sstable.get(b"banana", 3) == SSTableEntry(
         key=b"banana", seq_num=2, value=b"yellow"
     )
 
-    assert sstable.get(b"zebra") is None
-    assert sstable.get(b"cherry") == SSTableEntry(
+    assert sstable.get(b"zebra", 3) is None
+    assert sstable.get(b"cherry", 3) == SSTableEntry(
         key=b"cherry", seq_num=3, value=TOMBSTONE
     )
 

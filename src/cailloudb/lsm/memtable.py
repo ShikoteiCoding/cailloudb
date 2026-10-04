@@ -12,6 +12,12 @@ class MemTable:
     A simple wrapper around `lsm.skiplist.SkipList`
     """
 
+    #: Skiplist tree underlying the memtable
+    skiplist: SkipList
+
+    #: Skiplist configuration for max size
+    max_bytes_size: int
+
     def __init__(self, max_bytes_size: int = MEMTABLE_MAX_BYTES_SIZE):
         self.skiplist = SkipList()
         self.max_bytes_size = max_bytes_size
@@ -32,15 +38,15 @@ class MemTable:
         """
         self.skiplist.insert(key, seq_num, TOMBSTONE)
 
-    def get(self, key: bytes) -> MemTableEntry | None:
+    def get(self, key: bytes, seq_num: int) -> MemTableEntry | None:
         """
-        Get a value, tombstone or None from key.
+        Get a value, tombstone or None from key at or before `seq_num`.
 
         Behavior:
             None is exclusively returned for non found keys.
             Returns the deletion marker as a valid value.
         """
-        return self.skiplist.get(key)
+        return self.skiplist.get(key, seq_num)
 
     def __iter__(self) -> Iterator[MemTableEntry]:
         for entry in self.skiplist:

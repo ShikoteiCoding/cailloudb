@@ -26,8 +26,10 @@ def test_skiplist_insert_and_get(skiplist: SkipList):
     assert len(skiplist) == 1 == initial_size
     assert skiplist.level == initial_level
 
-    assert skiplist.get(b"key1") == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
-    assert skiplist.get(b"key2") is None
+    assert skiplist.get(b"key1", 0) == MemTableEntry(
+        key=b"key1", seq_num=0, value=b"val1"
+    )
+    assert skiplist.get(b"key2", 0) is None
 
 
 def test_skiplist_insert_same_key(skiplist: SkipList):
@@ -42,7 +44,9 @@ def test_skiplist_insert_same_key(skiplist: SkipList):
 
     # Size has increased because of insert
     assert len(skiplist) == 2 == initial_size + 1
-    assert skiplist.get(b"key1") == MemTableEntry(key=b"key1", seq_num=1, value=b"val2")
+    assert skiplist.get(b"key1", 1) == MemTableEntry(
+        key=b"key1", seq_num=1, value=b"val2"
+    )
 
 
 @patch.object(SkipList, "_random_level", return_value=0)

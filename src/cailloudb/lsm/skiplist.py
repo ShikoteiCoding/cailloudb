@@ -108,13 +108,13 @@ class SkipList:
         self.bytes_size += len(composite_key) + len(value)
         self._size += 1
 
-    def get(self, key: bytes) -> MemTableEntry | None:
+    def get(self, key: bytes, seq_num: int) -> MemTableEntry | None:
         """
-        Retrieves the latest value of a key along with its sequence number.
+        Retrieves the latest value of a key visible at or before `seq_num`.
 
         Behavior:
-            None is exclusively returned for keys that are not found.
-            Returns (seq_num, value) if found, where value might be a tombstone.
+            Returns None for keys that are not found at provided `seq_num`.
+            Returns MemTableEntry(key, seq_num, value) for the latest valid version.
         """
         current = self.header
 
@@ -127,14 +127,19 @@ class SkipList:
                 current.forward[i].composite_key < key
             ):
                 current = current.forward[i]
+
+        # Move to the first node corresponding to `key`
         current = current.forward[0]
 
-        if (
-            current is not None
-            and current.key == key
-            and len(current.composite_key) == len(key) + self._LEN_SEQUENCE_NUM
-        ):
-            return MemTableEntry(key=key, seq_num=current.seq_num, value=current.value)
+        # Iterate through version chain for `key`
+        while current is not None and current.key == key:
+            if current.seq_num <= seq_num:
+                # Found the newest version at latest before seq_num
+                return MemTableEntry(
+                    key=key, seq_num=current.seq_num, value=current.value
+                )
+            # Entry is too new for this `seq_num`. continue
+            current = current.forward[0]
 
         return None
 

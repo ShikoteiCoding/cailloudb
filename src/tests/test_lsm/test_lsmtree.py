@@ -9,7 +9,7 @@ def test_lsmtree_get_from_skiplist():
 
     lsmtree.put(b"key1", 0, b"val1")
 
-    value = lsmtree.get(b"key1")
+    value = lsmtree.get(b"key1", 0)
 
     assert value == b"val1"
 
@@ -31,22 +31,22 @@ def test_lsmtree_get_from_sstable_because_of_spill():
     assert len(lsmtree.sstables) == 3
 
     # Should get it from "oldest" sstable
-    assert lsmtree.get(b"key1") == b"val1"
-    assert lsmtree.memtable.get(b"key1") is None
-    assert lsmtree.sstables[0].get(b"key1") == MemTableEntry(
+    assert lsmtree.get(b"key1", 2) == b"val1"
+    assert lsmtree.memtable.get(b"key1", 2) is None
+    assert lsmtree.sstables[0].get(b"key1", 2) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
     )
 
     # Should get it from "middle" sstable
-    assert lsmtree.get(b"key2") == b"val2"
-    assert lsmtree.memtable.get(b"key2") is None
-    assert lsmtree.sstables[1].get(b"key2") == MemTableEntry(
+    assert lsmtree.get(b"key2", 2) == b"val2"
+    assert lsmtree.memtable.get(b"key2", 2) is None
+    assert lsmtree.sstables[1].get(b"key2", 2) == MemTableEntry(
         key=b"key2", seq_num=1, value=b"val2"
     )
 
     # Should get it from "recent" sstable
-    assert lsmtree.get(b"key3") == b"val3"
-    assert lsmtree.sstables[2].get(b"key3") == MemTableEntry(
+    assert lsmtree.get(b"key3", 2) == b"val3"
+    assert lsmtree.sstables[2].get(b"key3", 2) == MemTableEntry(
         key=b"key3", seq_num=2, value=b"val3"
     )
 
@@ -68,22 +68,22 @@ def test_lsmtree_get_from_sstable_and_skiplist():
     assert len(lsmtree.sstables) == 1
 
     # Should get it from "oldest" sstable
-    val1 = lsmtree.get(b"key1")
+    val1 = lsmtree.get(b"key1", 2)
     assert val1 == b"val1"
-    assert lsmtree.memtable.get(b"key1") is None
-    assert lsmtree.sstables[0].get(b"key1") == MemTableEntry(
+    assert lsmtree.memtable.get(b"key1", 2) is None
+    assert lsmtree.sstables[0].get(b"key1", 2) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
     )
 
     # Should get it from "recent" sstable
-    assert lsmtree.get(b"key2") == b"val2"
-    assert lsmtree.memtable.get(b"key2") is None
-    assert lsmtree.sstables[0].get(b"key2") == MemTableEntry(
+    assert lsmtree.get(b"key2", 2) == b"val2"
+    assert lsmtree.memtable.get(b"key2", 2) is None
+    assert lsmtree.sstables[0].get(b"key2", 2) == MemTableEntry(
         key=b"key2", seq_num=1, value=b"val2"
     )
 
     # Should get it from skiplist
-    assert lsmtree.get(b"key3") == b"val3"
-    assert lsmtree.memtable.get(b"key3") == MemTableEntry(
+    assert lsmtree.get(b"key3", 2) == b"val3"
+    assert lsmtree.memtable.get(b"key3", 2) == MemTableEntry(
         key=b"key3", seq_num=2, value=b"val3"
     )

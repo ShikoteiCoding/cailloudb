@@ -1,3 +1,5 @@
+from typing import Iterator
+
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable, SSTableWriter
 
@@ -43,9 +45,12 @@ class LSMTree:
         if self.memtable.is_full():
             self._rotate_memtable()
 
-    def get(self, key: bytes) -> bytes | None:
+    def get(self, key: bytes, seq_num: int) -> bytes | None:
+        """
+        Point-in-time reads.
+        """
         # Check active memtable first
-        entry = self.memtable.get(key)
+        entry = self.memtable.get(key, seq_num)
 
         # Tombstone is valid
         if entry:
@@ -55,12 +60,23 @@ class LSMTree:
         # TODO: solve concurrency issue when memtables are queued for flushing
         # TODO: implement bloom filter
         for sstable in reversed(self.sstables):
-            entry = sstable.get(key)
+            entry = sstable.get(key, seq_num)
 
             if entry:
                 return entry["value"]
 
         return None
+
+    def scan(self, start_key: bytes, end_key: bytes, seq_num: int) -> Iterator[tuple[bytes, bytes]]:
+        """
+        Ranged point-in-time reads.
+        """
+        # Check active memtable first
+        ...
+
+        # Check SSTable in reverse orders
+        ...
+
 
     def _rotate_memtable(self) -> None:
         """

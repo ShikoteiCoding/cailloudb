@@ -11,8 +11,10 @@ def test_memtable_put_and_get():
 
     assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert len(memtable) == 1
-    assert memtable.get(b"key1") == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
-    assert memtable.get(b"key2") is None
+    assert memtable.get(b"key1", 0) == MemTableEntry(
+        key=b"key1", seq_num=0, value=b"val1"
+    )
+    assert memtable.get(b"key2", 0) is None
 
 
 def test_memtable_put_and_delete():
@@ -22,8 +24,10 @@ def test_memtable_put_and_delete():
 
     assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
     assert len(memtable) == 1
-    assert memtable.get(b"key1") == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
-    assert memtable.get(b"key2") is None
+    assert memtable.get(b"key1", 0) == MemTableEntry(
+        key=b"key1", seq_num=0, value=b"val1"
+    )
+    assert memtable.get(b"key2", 0) is None
 
     memtable.delete(b"key1", 0)
     assert len(memtable) == 2
@@ -35,7 +39,7 @@ def test_memtable_put_and_delete():
         + LEN_SEQUENCE_NUM
         + len(TOMBSTONE)
     )
-    assert memtable.get(b"key1") == MemTableEntry(
+    assert memtable.get(b"key1", 0) == MemTableEntry(
         key=b"key1", seq_num=0, value=TOMBSTONE
     )
 
