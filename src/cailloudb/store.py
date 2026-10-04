@@ -118,9 +118,9 @@ class InMemoryStore(BaseStore):
     def _apply_delete(self, key: bytes, seq_num: int):
         if key not in self.__d:
             self.__d[key] = []
+            self.__index.insert(key)
 
         self.__d[key].append({"seq": seq_num})
-        self.__index.remove(key)
 
     async def put(self, key: bytes, value: bytes):
         """
