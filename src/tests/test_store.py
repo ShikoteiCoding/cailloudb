@@ -2,6 +2,17 @@ import pytest
 
 from cailloudb import InMemoryStore, WriteBatch
 
+__all__ = [
+    "test_in_memory_store_get_never_raises",
+    "test_in_memory_store_get_at_never_raises",
+    "test_in_memory_store_delete_never_raises",
+    "test_store_write_batch",
+    "test_in_memory_store_scan",
+    "test_in_memory_store_scan_at",
+    "test_put_rejects_none_value",
+    "test_put_rejects_non_bytes_key",
+]
+
 
 @pytest.mark.asyncio
 async def test_in_memory_store_get_never_raises(tmp_path):
@@ -125,6 +136,18 @@ async def test_put_rejects_none_value(tmp_path):
 
     with pytest.raises(ValueError):
         await store.put(b"a", None)  # type: ignore
+
+    assert await store.latest_sequence_number() == 0
+    records = [record async for record in store._wal.recover()]
+    assert records == []
+
+
+@pytest.mark.asyncio
+async def test_put_rejects_non_bytes_key(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    with pytest.raises(KeyError, match="invalid for key"):
+        await store.put("a", b"1")  # type: ignore[arg-type]
 
     assert await store.latest_sequence_number() == 0
     records = [record async for record in store._wal.recover()]

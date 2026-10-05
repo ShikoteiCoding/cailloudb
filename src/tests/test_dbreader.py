@@ -2,6 +2,14 @@ import pytest
 
 from cailloudb import Db, InMemoryStore
 
+__all__ = [
+    "test_dbreader_get",
+    "test_dbreader_scan",
+    "test_dbreader_sees_db_writes",
+    "test_dbreader_latest_sequence_number",
+    "test_db_reader_shares_store",
+]
+
 
 @pytest.mark.asyncio
 async def test_dbreader_get(tmp_path):

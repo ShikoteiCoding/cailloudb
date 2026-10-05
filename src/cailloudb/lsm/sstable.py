@@ -238,11 +238,11 @@ class SSTable:
         self, start_key: bytes | None, end_key: bytes | None, seq_num: int
     ) -> Iterator[SSTableEntry]:
         """
-        Scan values, tombstone or None from key at or before `seq_num`.
+        Scan values, tombstone or None from keys at or before `seq_num`.
 
         Behavior:
             start_key is inclusive, end_key is exclusive.
-            Yield SSTableEntry(key, seq_num, value) for the latest valid version.
+            Yield SSTableEntry(key, seq_num, value) for all the keys.
             Doesn't yield None (it is not aware of out-of-range keys)
             Ordering guarantee as the SSTable property
             Parse raw bytes to lightweight SSTableEntry typeddict

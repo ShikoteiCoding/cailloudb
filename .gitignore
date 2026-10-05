@@ -6,3 +6,5 @@ __pycache__
 *.mmd
 test.py
 .coverage
+htmlcov
+coverage.md

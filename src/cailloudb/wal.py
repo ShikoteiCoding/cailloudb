@@ -56,7 +56,7 @@ class Wal:
         self,
         key: bytes | WriteBatch,
         seq_num: int,
-        val: bytes | None = None,
+        value: bytes | None = None,
     ) -> int:
         timestamp = int(time.time())
         if isinstance(key, WriteBatch):
@@ -64,15 +64,15 @@ class Wal:
                 bytes([self._BATCH_KIND]) + self._TS.pack(timestamp) + bytes(key._buf)
             )
         else:
-            if val is None:
-                val = b""
+            if value is None:
+                value = b""
             body = (
                 self._SEQ.pack(seq_num)
                 + self._TS.pack(timestamp)
                 + self._LEN.pack(len(key))
-                + self._LEN.pack(len(val))
+                + self._LEN.pack(len(value))
                 + key
-                + val
+                + value
             )
             payload = bytes([self._SINGLE_KIND]) + body
         # TODO: keep one file open and append each record to it
@@ -123,20 +123,24 @@ class Wal:
                     yield key, seq_num, stored
                     seq_num += 1
                 continue
-            if kind != self._SINGLE_KIND:
-                raise ValueError("wal record kind")
 
-            (seq_num,) = self._SEQ.unpack_from(body, 0)
-            (timestamp,) = self._TS.unpack_from(body, 8)
-            inner = 16
-            (key_len,) = self._LEN.unpack_from(body, inner)
-            inner += 4
-            (val_len,) = self._LEN.unpack_from(body, inner)
-            inner += 4
-            key = bytes(body[inner : inner + key_len])
-            inner += key_len
-            val = bytes(body[inner : inner + val_len])
-            yield key, seq_num, val
+            elif kind == self._SINGLE_KIND:
+                (seq_num,) = self._SEQ.unpack_from(body, 0)
+                (timestamp,) = self._TS.unpack_from(body, 8)
+                inner = 16
+                (key_len,) = self._LEN.unpack_from(body, inner)
+                inner += 4
+                (val_len,) = self._LEN.unpack_from(body, inner)
+                inner += 4
+                key = bytes(body[inner : inner + key_len])
+                inner += key_len
+                val = bytes(body[inner : inner + val_len])
+                yield key, seq_num, val
+
+            else:
+                raise Exception(
+                    f"Unknown `kind` from WAL file, probably because the file is corrupted."
+                )
 
     # TODO: replay these sequences into the store after a crash
     async def recover(self) -> AsyncIterator[tuple[bytes, int, bytes]]:

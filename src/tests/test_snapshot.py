@@ -2,6 +2,15 @@ import pytest
 
 from cailloudb import Db, DbBuilder, InMemoryStore
 
+__all__ = [
+    "test_snapshot_get",
+    "test_snapshot_delete_replay",
+    "test_snapshot_reput",
+    "test_snapshot_scan",
+    "test_dbbuilder_snapshot",
+    "test_scan_same_range_semantics_on_snapshot",
+]
+
 
 @pytest.mark.asyncio
 async def test_snapshot_get(tmp_path):

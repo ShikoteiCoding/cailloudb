@@ -3,6 +3,12 @@ from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.skiplist import LEN_SEQUENCE_NUM
 
+__all__ = [
+    "test_memtable_insert_and_get",
+    "test_memtable_insert_tombstone",
+    "test_memtable_full",
+]
+
 
 def test_memtable_insert_and_get():
     memtable = MemTable()

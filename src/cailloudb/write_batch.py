@@ -63,10 +63,6 @@ class WriteBatch:
         )
         self.count += 1
 
-    def clear(self):
-        self._buf = bytearray(self._HEADER)
-        self.count = 0
-
     def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         buf = self._buf
         offset = self._HEADER

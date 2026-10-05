@@ -5,6 +5,19 @@ import pytest
 from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.skiplist import SkipList
 
+__all__ = [
+    "test_skiplist_initial_state",
+    "test_skiplist_insert_and_get",
+    "test_skiplist_insert_same_key",
+    "test_skiplist_insert_new_node_level_0",
+    "test_skiplist_level_expansion",
+    "test_skiplist_complex_pointer_routing",
+    "test_skiplist_put_out_of_order_insertion",
+    "test_skiplist_scan_fixed_range",
+    "test_skiplist_scan_unbounded_range",
+    "test_skiplist_scan_max_seq",
+]
+
 
 @pytest.fixture
 def skiplist() -> SkipList:

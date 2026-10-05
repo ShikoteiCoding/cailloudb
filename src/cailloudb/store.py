@@ -151,9 +151,4 @@ class InMemoryStore(BaseStore):
 
 
 class DiskStore:
-    @classmethod
-    def resolve(cls, addr: str) -> BaseStore:
-        if addr == ":memory:":
-            return InMemoryStore()
-
-        raise ValueError("Address format {} failed to resolve".format(addr))
+    NotImplementedError()
