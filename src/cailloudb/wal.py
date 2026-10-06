@@ -173,6 +173,7 @@ class Wal:
                 raise ValueError("wal checksum mismatch")
             yield kind, payload
 
+    # TODO : add TOMBSTONE here later
     def _single_ops(self, body: bytes) -> Iterator[tuple[bytes, int, bytes]]:
         (seq_num,) = self._SEQ.unpack_from(body, 0)
         inner = 8
@@ -203,22 +204,17 @@ class Wal:
         """
         pending: bytearray | None = None
         for kind, payload in self._physical_records(self._path.read_bytes()):
-            if kind == self._SINGLE_KIND or kind == self._BATCH_KIND_FULL:
-                if pending is not None:
-                    raise ValueError("wal record kind")
+            if pending is None:
                 if kind == self._SINGLE_KIND:
                     yield from self._single_ops(payload)
-                else:
+                elif kind == self._BATCH_KIND_FULL:
                     yield from self._batch_ops(payload)
-                continue
-            if kind == self._BATCH_KIND_FIRST:
-                if pending is not None:
+                elif kind == self._BATCH_KIND_FIRST:
+                    pending = bytearray(payload)
+                else:
                     raise ValueError("wal record kind")
-                pending = bytearray(payload)
                 continue
             if kind == self._BATCH_KIND_MIDDLE or kind == self._BATCH_KIND_LAST:
-                if pending is None:
-                    raise ValueError("wal record kind")
                 pending += payload
                 if kind == self._BATCH_KIND_LAST:
                     yield from self._batch_ops(bytes(pending))
