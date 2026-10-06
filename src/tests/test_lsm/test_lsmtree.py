@@ -34,12 +34,12 @@ def test_lsmtree_internals_iteratively_0_record_memtable():
     lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 2
-    assert len(lsmtree.sstables[0].offsets) == 1
+    assert len(lsmtree.sstables[0].index_keys) == 1
 
     lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 3
-    assert len(lsmtree.sstables[0].offsets) == 1
+    assert len(lsmtree.sstables[0].index_keys) == 1
 
 
 def test_lsmtree_internals_iteratively_1_records_memtables():
@@ -52,12 +52,12 @@ def test_lsmtree_internals_iteratively_1_records_memtables():
     lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 1
-    assert len(lsmtree.sstables[0].offsets) == 2
+    assert len(lsmtree.sstables[0].index_keys) == 1
 
     lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 1
     assert len(lsmtree.sstables) == 1
-    assert len(lsmtree.sstables[0].offsets) == 2
+    assert len(lsmtree.sstables[0].index_keys) == 1
 
 
 def test_lsmtree_get_from_skiplist():

@@ -1,39 +1,59 @@
 import random
 from typing import Iterator
 
-from constants import LEN_SEQUENCE_NUM
+from constants import (
+    LEN_METADATA,
+    LEN_SEQUENCE_NUM,
+    MAX_SEQ_NUM,
+    TOMBSTONE,
+    VALUE_TYPE_DELETE,
+    VALUE_TYPE_PUT,
+)
 from custom_types import MemTableEntry
+from lsm.utils import build_internal_key
 
 
 class _SkipNode:
     """
     Immutable storage unit for SkipList values.
 
-    Stores a composite_key (kept as bytes for performance) that always follows:
-    [key of varying length][encoded sequence_number of fixed length]
+    Stores an internal_key that always follows:
+    [User Key][~SeqNum (56 bits)][ValueType (8 bits)]
+
+    ValueType: PUT (0x1) or DELETE (0x0)
     """
 
-    __slots__ = ("composite_key", "value", "forward")
+    __slots__ = ("internal_key", "value", "forward")
 
-    def __init__(self, composite_key: bytes, value: bytes, level: int):
-        self.composite_key = composite_key
+    def __init__(self, internal_key: bytes, value: bytes, level: int):
+        self.internal_key = internal_key
         self.value = value
-
-        #: List of pointers to forward elements
         self.forward: list[_SkipNode] = [None] * (level + 1)  # type: ignore
 
-    # Keep as properties to keep memory footprint lower
-    # the trade-off is runtime cpu
     @property
     def key(self) -> bytes:
-        return self.composite_key[:-LEN_SEQUENCE_NUM]
+        """
+        Extracts the original User Key.
+        """
+        return self.internal_key[:-LEN_METADATA]
 
     @property
     def seq_num(self) -> int:
-        inverted_seq = int.from_bytes(
-            self.composite_key[-LEN_SEQUENCE_NUM:], byteorder="big"
+        """
+        Extracts the 56-bit Sequence Number.
+        """
+        metadata_int = int.from_bytes(
+            self.internal_key[-LEN_METADATA:], byteorder="big"
         )
-        return int(0xFFFFFFFFFFFFFFFF - inverted_seq)
+        inverted_seq = metadata_int >> 8
+        return MAX_SEQ_NUM - inverted_seq
+
+    @property
+    def value_type(self) -> int:
+        """
+        Extracts the operation type (0x1 for Put, 0x0 for Delete).
+        """
+        return self.internal_key[-1]
 
 
 class SkipList:
@@ -46,13 +66,10 @@ class SkipList:
         Logical deletion (through tombstone)
     """
 
-    #: Length of sequence number contributing to key-version total length
-    _LEN_SEQUENCE_NUM = 8
-
     def __init__(self, max_level: int = 16, p: float = 0.5):
         self.max_level = max_level
         self.p = p
-        self.header = _SkipNode(composite_key=b"", value=b"", level=self.max_level)
+        self.header = _SkipNode(internal_key=b"", value=b"", level=self.max_level)
         self.level = 0
         self._size = 0
         self.bytes_size = 0
@@ -73,9 +90,7 @@ class SkipList:
         Encodes the key and sequence number into a composite internal key
         ordered by key (ascending) and sequence number (descending).
         """
-        # Reverse the alphabetical order of the version so it is descending (latest first)
-        descending_seq = (0xFFFFFFFFFFFFFFFF - seq_num).to_bytes(8, byteorder="big")
-        composite_key = key + descending_seq
+        internal_key = build_internal_key(key, seq_num, (value == TOMBSTONE))
 
         # Array to store the nodes where we drop down a level during search
         update: list[_SkipNode] = [None] * (self.max_level + 1)  # type: ignore
@@ -83,9 +98,7 @@ class SkipList:
 
         # Traverse the skiplist top-down / left-to-right
         for i in range(self.level, -1, -1):
-            while (
-                current.forward[i] and current.forward[i].composite_key < composite_key
-            ):
+            while current.forward[i] and current.forward[i].internal_key < internal_key:
                 current = current.forward[i]
             update[i] = current
 
@@ -99,13 +112,13 @@ class SkipList:
             self.level = r_level
 
         # Instantiate the new node and splice it into the forward pointers
-        new_node = _SkipNode(composite_key, value, r_level)
+        new_node = _SkipNode(internal_key, value, r_level)
         for i in range(r_level + 1):
             new_node.forward[i] = update[i].forward[i]
             update[i].forward[i] = new_node
 
-        # Track total bytes (including the 8-byte sequence tag) and size
-        self.bytes_size += len(composite_key) + len(value)
+        # Track total bytes size
+        self.bytes_size += len(internal_key) + len(value)
         self._size += 1
 
     def get(self, key: bytes, seq_num: int) -> MemTableEntry | None:
@@ -124,7 +137,7 @@ class SkipList:
                 current.forward[i]
                 and
                 # Trick, b"foo" is always less than b"foo\xff..."
-                current.forward[i].composite_key < key
+                current.forward[i].internal_key < key
             ):
                 current = current.forward[i]
 
@@ -164,7 +177,7 @@ class SkipList:
                     current.forward[i]
                     and
                     # Trick, b"foo" is always less than b"foo\xff..."
-                    current.forward[i].composite_key < start_key
+                    current.forward[i].internal_key < start_key
                 ):
                     current = current.forward[i]
 
@@ -181,7 +194,7 @@ class SkipList:
 
             current = current.forward[0]
 
-    def __iter__(self) -> Iterator[MemTableEntry]:
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         """
         Sequentially yields all entries stored in the SkipList.
 
@@ -195,9 +208,7 @@ class SkipList:
         current = self.header.forward[0]
 
         while current is not None:
-            yield MemTableEntry(
-                key=current.key, seq_num=current.seq_num, value=current.value
-            )
+            yield (current.internal_key, current.value)
             current = current.forward[0]
 
     def __len__(self) -> int:

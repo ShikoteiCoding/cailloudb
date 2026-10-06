@@ -30,6 +30,9 @@ class LSMTree:
         #: List of SSTables
         self.sstables: list[SSTable] = []
 
+        #: Next file id for .sst
+        self.next_file_id = 1
+
     def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Put a key-value pair into the currently active memtable.
@@ -156,6 +159,10 @@ class LSMTree:
             return
 
         while self.immutable_memtables:
-            memtable = self.immutable_memtables.pop()
-            self.sstables.append(self.sstable_writer.write(memtable))
+            memtable = self.immutable_memtables.pop(0)
+            sstables = self.sstable_writer.write(memtable, self.next_file_id)
+            self.next_file_id += len(sstables)
+
+            for sstable in sstables:
+                self.sstables.append(sstable)
             # TODO: Delete the corresponding wal file ?

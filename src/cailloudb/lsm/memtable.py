@@ -53,7 +53,7 @@ class MemTable:
         for entry in self.skiplist.scan(start_key, end_key, seq_num):
             yield entry
 
-    def __iter__(self) -> Iterator[MemTableEntry]:
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         """
         Sequentially yields all entries stored in the SkipList.
 

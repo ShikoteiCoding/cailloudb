@@ -1,119 +1,232 @@
+import bisect
 import io
 from pathlib import Path
 from typing import Iterator
 
 from constants import (
-    KEY_LEN_STRUCT,
+    DEFAULT_BLOCK_SIZE,
+    FOOTER_STRUCT,
+    INDEX_BLOCK_OFFSET_AND_LEN_LEN,
+    INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
+    INTERNAL_KEY_LEN_LEN,
+    INTERNAL_KEY_LEN_STRUCT,
     KEY_METADATA_STRUCT,
-    LEN_KEY_LEN,
     LEN_KEY_METADATA,
-    LEN_VAL_LEN,
+    MAGIC_NUMBER,
+    MAX_SEQ_NUM,
+    SSTABLE_FOOTER_SIZE,
+    SSTABLE_MAX_FILE_SIZE,
     TOMBSTONE,
-    VAL_LEN_STRUCT,
+    VALUE_LEN_LEN,
+    VALUE_LEN_STRUCT,
 )
 from custom_types import MemTableEntry, SSTableEntry
+from lsm.block import BlockBuilder, BlockReader
 from lsm.memtable import MemTable
 
+# def encode_memtable_entry(entry: MemTableEntry) -> tuple[bytearray, int]:
+#     """
+#     Encode a memtable entry according to encoding described in
+#         `cailloudb.lsm.sstable.SSTableWriter`.
+#     """
+#     key, seq_num, value = entry["key"], entry["seq_num"], entry["value"]
 
-def encode_memtable_entry(entry: MemTableEntry) -> tuple[bytearray, int]:
-    """
-    Encode a memtable entry according to encoding described in
-        `cailloudb.lsm.sstable.SSTableWriter`.
-    """
-    key, seq_num, value = entry["key"], entry["seq_num"], entry["value"]
+#     is_tombstone = value == TOMBSTONE
+#     value_type = 0x0 if is_tombstone else 0x1
+#     val_len = 0 if is_tombstone else len(value)
 
-    is_tombstone = value == TOMBSTONE
-    value_type = 0x0 if is_tombstone else 0x1
-    val_len = 0 if is_tombstone else len(value)
+#     # InternalKey = Key + Metadata
+#     internal_key_len = len(key) + LEN_KEY_METADATA
 
-    # InternalKey = Key + Metadata
-    internal_key_len = len(key) + LEN_KEY_METADATA
+#     # Invert sequence number bits (56 bits) (same logic as SkipList)
+#     inverted_seq = (~seq_num) & 0x00FFFFFFFFFFFFFF
+#     key_metadata = (inverted_seq << 8) | value_type
 
-    # Invert sequence number bits (56 bits) (same logic as SkipList)
-    inverted_seq = (~seq_num) & 0x00FFFFFFFFFFFFFF
-    key_metadata = (inverted_seq << 8) | value_type
+#     # Allocate fixed-size buffer
+#     total_size = (
+#         LEN_KEY_LEN
+#         + internal_key_len
+#         + (LEN_VAL_LEN + val_len if not is_tombstone else 0)
+#     )
+#     buf = bytearray(total_size)
 
-    # Allocate fixed-size buffer
-    total_size = (
-        LEN_KEY_LEN
-        + internal_key_len
-        + (LEN_VAL_LEN + val_len if not is_tombstone else 0)
-    )
-    buf = bytearray(total_size)
+#     # Pack length of InternalKey (key + key metadata)
+#     INTERNAL_KEY_LEN_STRUCT.pack_into(buf, 0, internal_key_len)
+#     offset = LEN_KEY_LEN
 
-    # Pack length of InternalKey (key + key metadata)
-    KEY_LEN_STRUCT.pack_into(buf, 0, internal_key_len)
-    offset = LEN_KEY_LEN
+#     # Pack key bytes
+#     buf[offset : offset + len(key)] = key
+#     offset += len(key)
 
-    # Pack key bytes
-    buf[offset : offset + len(key)] = key
-    offset += len(key)
+#     # Pack Key Metadata
+#     KEY_METADATA_STRUCT.pack_into(buf, offset, key_metadata)
+#     offset += LEN_KEY_METADATA
 
-    # Pack Key Metadata
-    KEY_METADATA_STRUCT.pack_into(buf, offset, key_metadata)
-    offset += LEN_KEY_METADATA
+#     # Pack Value Length + Value bytes (if not a tombstone)
+#     if not is_tombstone:
+#         VAL_LEN_STRUCT.pack_into(buf, offset, val_len)
+#         offset += LEN_VAL_LEN
+#         buf[offset : offset + val_len] = value
 
-    # Pack Value Length + Value bytes (if not a tombstone)
-    if not is_tombstone:
-        VAL_LEN_STRUCT.pack_into(buf, offset, val_len)
-        offset += LEN_VAL_LEN
-        buf[offset : offset + val_len] = value
+#     return buf, total_size
 
-    return buf, total_size
+
+# class SSTableWriter:
+"""
+Encodes and writes entries from cailloudb.lsm.memtable.MemTable to disk.
+
+Binary Layout for Entry:
+    [4 bytes internal key len][internal key bytes][4 bytes val len][val bytes]
+    └────────────────────────────────────────────┘└──────────────────────────┘
+            InternalKey Block                           Value Block (Put only)
+
+InternalKey Structure (internal key len = len(key) + 8 bytes):
+    [N bytes key][8 bytes metadata]
+
+Key Metadata Layout:
+    ┌──────────────────────────────────────────────┬────────────────────────┐
+    │ Bits 63-8: Bit-Inverted SeqNum (~seq_num)    │ Bits 7-0: ValueType    │
+    │ (56 bits, yields DESC sorting via byte comp) │ (0x0 = Delete, 0x1=Put)│
+    └──────────────────────────────────────────────┴────────────────────────┘
+
+Ordering Properties:
+    By bit-inverting `seq_num` and encoding the key metadata, standard
+    lexicographical byte comparisons natively sort keys by:
+        1. Key ASC
+        2. Sequence Number DESC (newest versions come first)
+
+SSTable binary file layout
+
++------------------------------------------------------------------------+
+| Data Block 0 (~4KB of length-prefixed MemTableEntries)                 |
++------------------------------------------------------------------------+
+| Data Block 1 (~4KB of length-prefixed MemTableEntries)                 |
++------------------------------------------------------------------------+
+| ...                                                                    |
++------------------------------------------------------------------------+
+| Data Block N (Final partial data block)                                |
++------------------------------------------------------------------------+
+| Index Block: Array of [4B KeyLen][LastKey][8B BlockOffset][8B BlockLen]|
++------------------------------------------------------------------------+
+| Footer (20 Bytes Fixed): [8B IndexOffset][8B IndexSize][4B Magic]      |
++------------------------------------------------------------------------+
+"""
 
 
 class SSTableWriter:
-    """
-    Encodes and writes entries from cailloudb.lsm.memtable.MemTable to disk.
-
-    Binary Layout for Entry:
-        [4 bytes internal key len][internal key bytes][4 bytes val len][val bytes]
-        └────────────────────────────────────────────┘└──────────────────────────┘
-             InternalKey Block                           Value Block (Put only)
-
-    InternalKey Structure (internal key len = len(key) + 8 bytes):
-        [N bytes key][8 bytes metadata]
-
-    Key Metadata Layout:
-        ┌──────────────────────────────────────────────┬────────────────────────┐
-        │ Bits 63-8: Bit-Inverted SeqNum (~seq_num)    │ Bits 7-0: ValueType    │
-        │ (56 bits, yields DESC sorting via byte comp) │ (0x0 = Delete, 0x1=Put)│
-        └──────────────────────────────────────────────┴────────────────────────┘
-
-    Ordering Properties:
-        By bit-inverting `seq_num` and encoding the key metadata, standard
-        lexicographical byte comparisons natively sort keys by:
-            1. Key ASC
-            2. Sequence Number DESC (newest versions come first)
-    """
-
-    def __init__(self, in_memory: bool, dir: Path | None = None):
+    def __init__(
+        self,
+        in_memory: bool,
+        dir: Path | None = None,
+        block_size: int = DEFAULT_BLOCK_SIZE,
+        max_file_size: int = SSTABLE_MAX_FILE_SIZE,
+    ):
         self.in_memory = in_memory
         self.dir = dir
+        self.block_size = block_size
+        self.max_file_size = max_file_size
 
-    def write(self, memtable: MemTable) -> SSTable:
+    def write(self, memtable: MemTable, file_id: int) -> list[SSTable]:
         """
-        Write each MemTableEntry of the MemTable to destination.
+        Write a MemTable to one or more SSTables.
+        Splits files when they exceed max_file_size.
         """
-        # Keep track of offset of each records for fast lookup
-        offsets = []
-        offset = 0
+        generated_sstables = []
+        out = io.BytesIO()
+        block_builder = BlockBuilder(self.block_size)
 
-        path = Path()
-        file = io.BytesIO()
+        index_entries: list[tuple[bytes, int, int]] = []
+        current_offset = 0
 
-        for entry in memtable:
-            offsets.append(offset)
+        def finalize_current_sstable():
+            """Helper to write the index/footer, save the file, and reset state."""
+            nonlocal out, index_entries, current_offset, file_id
 
-            buf, total_size = encode_memtable_entry(entry)
-            file.write(buf)
+            # --- 2. Write Index Block ---
+            index_offset = out.tell()
+            for last_key, blk_offset, blk_len in index_entries:
+                out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
+                out.write(last_key)
+                out.write(INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(blk_offset, blk_len))
 
-            offset += total_size
+            index_size = out.tell() - index_offset
 
-        file.seek(0)
-        if self.in_memory:
-            return InMemorySSTable(file=file, path=path, offsets=offsets)
-        return SSTable(file=file, path=path, offsets=offsets)
+            # --- 3. Write Footer ---
+            footer_bytes = FOOTER_STRUCT.pack(index_offset, index_size, MAGIC_NUMBER)
+            out.write(footer_bytes)
+
+            # Rewind and finalize the SSTable object
+            out.seek(0)
+
+            # Note: You can format the path here if writing to disk
+            generated_sstables.append(
+                SSTable(file=out, path=Path(f"{file_id:06d}.sst"))
+            )
+            file_id += 1
+
+            # --- 4. Reset state for the next SSTable ---
+            out = io.BytesIO()
+            index_entries = []
+            current_offset = 0
+
+        # --- 1. Stream Data Blocks ---
+        for internal_key, value in memtable:
+            # Flush current block if threshold is met BEFORE adding new entry
+            if block_builder.is_full():
+                block_data, last_internal_key = block_builder.reset()
+                out.write(block_data)
+
+                block_len = len(block_data)
+                index_entries.append((last_internal_key, current_offset, block_len))
+                current_offset += block_len
+
+                # CHECK FOR FILE SPLIT
+                if current_offset >= self.max_file_size:
+                    finalize_current_sstable()
+
+            # Add entry to active block buffer
+            block_builder.add(internal_key, value)
+
+        # Flush final partial block if present
+        if not block_builder.is_empty():
+            block_data, last_internal_key = block_builder.reset()
+            out.write(block_data)
+
+            block_len = len(block_data)
+            index_entries.append((last_internal_key, current_offset, block_len))
+            current_offset += block_len
+
+        # Finalize the last file (if it contains any data)
+        # We check > 0 to avoid generating an empty SSTable if the previous
+        # file split happened exactly on the last record of the MemTable.
+        if current_offset > 0:
+            finalize_current_sstable()
+
+        return generated_sstables
+
+    # def write(self, memtable: MemTable) -> SSTable:
+    #     """
+    #     Write each MemTableEntry of the MemTable to destination.
+    #     """
+    #     # Keep track of offset of each records for fast lookup
+    #     offsets = []
+    #     offset = 0
+
+    #     path = Path()
+    #     file = io.BytesIO()
+
+    #     for entry in memtable:
+    #         offsets.append(offset)
+
+    #         buf, total_size = encode_memtable_entry(entry)
+    #         file.write(buf)
+
+    #         offset += total_size
+
+    #     file.seek(0)
+    #     if self.in_memory:
+    #         return InMemorySSTable(file=file, path=path, offsets=offsets)
+    #     return SSTable(file=file, path=path, offsets=offsets)
 
 
 class SSTable:
@@ -123,115 +236,108 @@ class SSTable:
     #: Path to the file
     path: Path
 
-    #: List of buffer offset pointers to first char of each records
-    offsets: list[int]
+    #: Sparse Index - (last_key, offset, length) for each block
+    index_keys: list[bytes]
 
-    def __init__(self, file: io.BytesIO, path: Path, offsets: list[int]):
+    def __init__(self, file: io.BytesIO, path: Path):
         self.file = file
         self.path = path
-        self.offsets = offsets
 
-        # TODO: Used as skip filter
-        # self.low_key: bytes = low_key
-        # self.high_key: bytes = high_key
+        self.index_keys: list[bytes] = []
+        self.index_meta: list[tuple[int, int]] = []  # (offset, length)
 
-    def __iter__(self):
-        """
-        Read sequentially the whole physical SSTable.
+        self._load_index()
 
-        Decode SSTable entries from disk according to encoding from
-            `cailloudb.lsm.sstable.SSTableWriter`.
-        """
-        for offset in self.offsets:
-            self.file.seek(offset)
+        # reset buffer offset
+        self.file.seek(0)
 
+    def _load_index(self):
+        """Reads the footer and parses the index block into memory."""
+        # 1. Read Footer
+        # Seek backward from the EOF by the exact size of the footer struct
+        self.file.seek(-FOOTER_STRUCT.size, io.SEEK_END)
+        footer_bytes = self.file.read(FOOTER_STRUCT.size)
+        index_offset, index_size, magic = FOOTER_STRUCT.unpack(footer_bytes)
+
+        if magic != MAGIC_NUMBER:
+            raise ValueError(f"Invalid magic number in SSTable: {self.path}")
+
+        # 2. Read the entire Index Block
+        self.file.seek(index_offset)
+        index_bytes = self.file.read(index_size)
+
+        # 3. Parse Index Entries
+        cursor = 0
+        while cursor < index_size:
             # Read internal key length
-            internal_key_len_bytes = self.file.read(LEN_KEY_LEN)
-            internal_key_len = KEY_LEN_STRUCT.unpack(internal_key_len_bytes)[0]
+            key_len = INTERNAL_KEY_LEN_STRUCT.unpack_from(index_bytes, cursor)[0]
+            cursor += INTERNAL_KEY_LEN_STRUCT.size
 
-            # Read full internal key
-            internal_key = self.file.read(internal_key_len)
+            # Read the actual key
+            last_key = index_bytes[cursor : cursor + key_len]
+            cursor += key_len
 
-            # Split into key and metadata
-            key = internal_key[:-LEN_KEY_METADATA]
-            key_metadata_bytes = internal_key[-LEN_KEY_METADATA:]
+            # Read the data block offset and length
+            blk_offset, blk_len = INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.unpack_from(
+                index_bytes, cursor
+            )
+            cursor += INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
 
-            # Unpack Key Metadata
-            key_metadata = KEY_METADATA_STRUCT.unpack(key_metadata_bytes)[0]
-            inverted_seq = key_metadata >> 8
-            seq_num = (~inverted_seq) & 0x00FFFFFFFFFFFFFF
-            value_type = key_metadata & 0xFF
+            self.index_keys.append(last_key)
+            self.index_meta.append((blk_offset, blk_len))
 
-            # Handle value / tombstone based on value_type (0x0 = Delete, 0x1 = Put)
-            if value_type == 0x0:
-                yield SSTableEntry(key=key, seq_num=seq_num, value=TOMBSTONE)
-            else:
-                val_len_bytes = self.file.read(LEN_VAL_LEN)
-                val_len = VAL_LEN_STRUCT.unpack(val_len_bytes)[0]
-                val = self.file.read(val_len)
-                yield SSTableEntry(key=key, seq_num=seq_num, value=val)
+    def _read_block(self, offset: int, length: int) -> bytes:
+        """Helper to fetch a raw data block."""
+        self.file.seek(offset)
+        return self.file.read(length)
+
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
+        """
+        Sequential scan over all records in the SSTable.
+        """
+        for blk_offset, blk_len in self.index_meta:
+            # Read the full block
+            block_data = self._read_block(blk_offset, blk_len)
+
+            # Delegate parsing to the BlockReader
+            block_reader = BlockReader(block_data)
+
+            # Yield entries exactly as they appear
+            for internal_key, value in block_reader:
+                yield internal_key, value
 
     def get(self, key: bytes, seq_num: int) -> SSTableEntry | None:
         """
-        Get the latest version of `key` at or before `seq_num`.
-
-        Behavior:
-            Returns None if key is not found.
-            Returns the deletion marker as a valid value.
+        Point lookup using Binary Search.
         """
-        # Build a lookup internal key from provided maximum `seq_num``
-        inverted_target_seq = (~seq_num) & 0x00FFFFFFFFFFFFFF
-        target_key_metadata = (inverted_target_seq << 8) | 0x00
-        target_internal_key = key + KEY_METADATA_STRUCT.pack(target_key_metadata)
-
-        left = 0
-        right = len(self.offsets) - 1
-        found_offset = -1
-
-        # Binary search over raw InternalKey byte representations
-        while left <= right:
-            mid = (left + right) // 2
-            offset = self.offsets[mid]
-
-            self.file.seek(offset)
-            internal_key_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
-            entry_internal_key = self.file.read(internal_key_len)
-
-            if entry_internal_key >= target_internal_key:
-                found_offset = offset
-                right = mid - 1  # Try to find an earlier matching entry on the left
-            else:
-                left = mid + 1
-
-        if found_offset == -1:
+        if not self.index_keys:
             return None
 
-        # Read and validate the single candidate landed on
-        self.file.seek(found_offset)
-        internal_key_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
-        entry_internal_key = self.file.read(internal_key_len)
+        # 1. Build target internal key for binary searching the block index.
+        # Type byte 0x00 ensures we target the lowest byte representation for this sequence number.
+        inverted_seq = MAX_SEQ_NUM - seq_num
+        target_metadata = (inverted_seq << KEY_METADATA_STRUCT.size) | 0x00
+        target_internal_key = key + KEY_METADATA_STRUCT.pack(target_metadata)
 
-        # Extract table key
-        table_key = entry_internal_key[:-LEN_KEY_METADATA]
-        if table_key != key:
-            return None  # All versions of `key` were newer than `seq_num` or `key` doesn't exist
+        # 2. Find the candidate block
+        block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
+        if block_idx >= len(self.index_keys):
+            return None  # Key is larger than any key in this SSTable
 
-        # Unpack key metadata
-        key_metadata = KEY_METADATA_STRUCT.unpack(
-            entry_internal_key[-LEN_KEY_METADATA:]
-        )[0]
-        inverted_seq = key_metadata >> 8
-        entry_seq_num = (~inverted_seq) & 0x00FFFFFFFFFFFFFF
-        value_type = key_metadata & 0xFF
+        # 3. Fetch block data & search inside the block
+        blk_offset, blk_len = self.index_meta[block_idx]
+        block_data = self._read_block(blk_offset, blk_len)
 
-        # Handle deletion marker
-        if value_type == 0x0:
-            return SSTableEntry(key=key, seq_num=entry_seq_num, value=TOMBSTONE)
+        block_reader = BlockReader(block_data)
+        table_value, table_seq_num, is_tombstone = block_reader.get(key, seq_num)
 
-        # Read value
-        val_len = VAL_LEN_STRUCT.unpack(self.file.read(LEN_VAL_LEN))[0]
+        if not is_tombstone and table_value is None:
+            return
+
         return SSTableEntry(
-            key=key, seq_num=entry_seq_num, value=self.file.read(val_len)
+            key=key,
+            seq_num=table_seq_num,  # type: ignore
+            value=table_value if table_value and not is_tombstone else TOMBSTONE,
         )
 
     def scan(
@@ -243,64 +349,56 @@ class SSTable:
         Behavior:
             start_key is inclusive, end_key is exclusive.
             Yield SSTableEntry(key, seq_num, value) for all the keys.
-            Doesn't yield None (it is not aware of out-of-range keys)
-            Ordering guarantee as the SSTable property
-            Parse raw bytes to lightweight SSTableEntry typeddict
+            Ordering guarantee as the SSTable property.
+            Parse raw bytes to lightweight SSTableEntry typeddict.
+            Yield all updates of a same key. Upstream handles dedup if needed.
         """
-        start_idx = 0
+        if not self.index_keys:
+            return
 
-        # Binary search over raw InternalKey byte representations
-        if start_key is not None:
-            target_internal_key = start_key + (b"\x00" * LEN_KEY_METADATA)
+        if start_key is None:
+            start_block_idx = 0
+        else:
+            target_internal_key = start_key + (b"\x00" * KEY_METADATA_STRUCT.size)
+            start_block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
 
-            left = 0
-            right = len(self.offsets) - 1
-            start_idx = len(self.offsets)
+            if start_block_idx >= len(self.index_keys):
+                return
 
-            while left <= right:
-                mid = (left + right) // 2
-                self.file.seek(self.offsets[mid])
+        # 2. Iterate block-by-block starting from target block
+        for block_idx in range(start_block_idx, len(self.index_keys)):
+            blk_offset, blk_len = self.index_meta[block_idx]
+            block_data = self._read_block(blk_offset, blk_len)
 
-                ik_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
-                entry_ik = self.file.read(ik_len)
+            block_reader = BlockReader(block_data)
 
-                if entry_ik >= target_internal_key:
-                    start_idx = mid
-                    right = mid - 1  # Keep searching left for the true start
-                else:
-                    left = mid + 1
+            # 3. Scan entries inside the 4 KB block
+            for internal_key, raw_value in block_reader:
+                table_key = internal_key[:-LEN_KEY_METADATA]
 
-        # Scan Sequentially from start_idx
-        for idx in range(start_idx, len(self.offsets)):
-            self.file.seek(self.offsets[idx])
+                # Filter keys prior to start_key (for early keys in the first block)
+                if start_key is not None and table_key < start_key:
+                    continue
 
-            ik_len = KEY_LEN_STRUCT.unpack(self.file.read(LEN_KEY_LEN))[0]
-            entry_ik = self.file.read(ik_len)
+                # Exit immediately if we cross the exclusive upper bound
+                if end_key is not None and table_key >= end_key:
+                    return
 
-            table_key = entry_ik[:-LEN_KEY_METADATA]
+                # Unpack sequence number & type using bitwise inversion
+                key_metadata = KEY_METADATA_STRUCT.unpack(
+                    internal_key[-LEN_KEY_METADATA:]
+                )[0]
+                inverted_seq = key_metadata >> 8
+                entry_seq_num = (~inverted_seq) & 0x00FFFFFFFFFFFFFF
+                value_type = key_metadata & 0xFF
 
-            # Exit if we cross the exclusive end_key (exclusive)
-            if end_key is not None and table_key >= end_key:
-                break
+                # Ignore versions produced after the read snapshot
+                if entry_seq_num > seq_num:
+                    continue
 
-            # Parse the key metadata (seq_num and value_type)
-            key_metadata = KEY_METADATA_STRUCT.unpack(entry_ik[-LEN_KEY_METADATA:])[0]
-            inverted_seq = key_metadata >> 8
-            entry_seq_num = (~inverted_seq) & 0x00FFFFFFFFFFFFFF
-            value_type = key_metadata & 0xFF
+                # Yield active value or TOMBSTONE constant
+                val = TOMBSTONE if value_type == 0x0 else raw_value
 
-            # Ignore newer versions
-            if entry_seq_num > seq_num:
-                continue
-
-            # Yield the entry (tombstone or value)
-            if value_type == 0x0:
-                yield SSTableEntry(
-                    key=table_key, seq_num=entry_seq_num, value=TOMBSTONE
-                )
-            else:
-                val_len = VAL_LEN_STRUCT.unpack(self.file.read(LEN_VAL_LEN))[0]
-                val = self.file.read(val_len)
                 yield SSTableEntry(key=table_key, seq_num=entry_seq_num, value=val)
 
 
@@ -309,5 +407,5 @@ class InMemorySSTable(SSTable):
     In-memory SSTable for `cailloudb.store.InMemoryStore`
     """
 
-    def __init__(self, file: io.BytesIO, path: Path, offsets: list[int]):
-        super().__init__(file, path, offsets)
+    def __init__(self, file: io.BytesIO, path: Path):
+        super().__init__(file, path)
