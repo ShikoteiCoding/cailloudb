@@ -66,7 +66,6 @@ async def test_store_write_batch(tmp_path):
     assert await db.latest_sequence_number() == 4
 
 
-@pytest.mark.skip("bug rn")
 @pytest.mark.asyncio
 async def test_in_memory_store_scan(tmp_path):
     store = InMemoryStore(tmp_path / "wal")

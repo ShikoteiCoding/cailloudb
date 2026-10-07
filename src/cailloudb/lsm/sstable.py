@@ -34,6 +34,9 @@ class SSTableWriter:
         self.block_size = block_size
         self.max_file_size = max_file_size
 
+        # TODO: Move to settings once available
+        assert max_file_size > block_size, "File size must be greater then block size"
+
     def write(self, memtable: MemTable, file_id: int) -> list[SSTable]:
         """
         Write a MemTable to one or more SSTables.
@@ -86,6 +89,8 @@ class SSTableWriter:
 
             generated_sstables.append(
                 SSTable(file=out, path=Path(f"{file_id:06d}.sst"))
+                if not self.in_memory
+                else InMemorySSTable(file=out, path=Path(f"{file_id:06d}.sst"))
             )
             file_id += 1
 
@@ -200,11 +205,8 @@ class SSTable:
 
     def get(self, key: bytes, seq_num: int) -> SSTableEntry | None:
         """
-        Get value from at or before `seq_num`.
+        Get value or tombstone at or before `seq_num`.
         """
-        if not self.index_keys:
-            return None
-
         # Build a target internal key from key/seq_num pair
         # Passing "is_deleted" True to respect Value Type ordering
         target_internal_key = build_internal_key(key, seq_num, True)
@@ -243,9 +245,6 @@ class SSTable:
             Parse raw bytes to lightweight SSTableEntry typeddict.
             Yield all updates of a same key. Upstream handles dedup if needed.
         """
-        if not self.index_keys:
-            return
-
         if start_key is None:
             start_block_idx = 0
         else:
@@ -253,7 +252,7 @@ class SSTable:
             start_block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
 
             if start_block_idx >= len(self.index_keys):
-                return
+                return  # Key is larger than any key in this SSTable
 
         for block_idx in range(start_block_idx, len(self.index_keys)):
             block_offset, block_len = self.index_meta[block_idx]

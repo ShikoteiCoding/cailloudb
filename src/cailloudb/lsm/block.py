@@ -4,9 +4,10 @@ from typing import Iterator
 from constants import (
     INTERNAL_KEY_LEN_STRUCT,
     KEY_METADATA_STRUCT,
-    MAX_SEQ_NUM,
     VALUE_LEN_STRUCT,
+    VALUE_TYPE_DELETE,
 )
+from lsm.utils import extract_from_internal_key
 
 
 class BlockBuilder:
@@ -130,16 +131,10 @@ class BlockReader:
                 return None, None, False
 
             if table_key == key:
-                # Unpack metadata to get sequence number and type
-                metadata_bytes = internal_key[-KEY_METADATA_STRUCT.size :]
-                key_metadata = KEY_METADATA_STRUCT.unpack(metadata_bytes)[0]
-
-                inverted_seq = key_metadata >> KEY_METADATA_STRUCT.size
-                table_seq_num = MAX_SEQ_NUM - inverted_seq
-                value_type = key_metadata & 0xFF
+                _, table_seq_num, value_type = extract_from_internal_key(internal_key)
 
                 if table_seq_num <= seq_num:
-                    if value_type == 0x00:  # Tombstone (Delete)
+                    if value_type == VALUE_TYPE_DELETE:
                         return b"", table_seq_num, True
                     return value, table_seq_num, False
 

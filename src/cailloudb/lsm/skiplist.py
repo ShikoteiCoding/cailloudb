@@ -40,13 +40,6 @@ class _SkipNode:
         inverted_seq = metadata_int >> LEN_METADATA
         return MAX_SEQ_NUM - inverted_seq
 
-    @property
-    def value_type(self) -> int:
-        """
-        Extracts the operation type (Put or Delete).
-        """
-        return self.internal_key[-1]
-
 
 class SkipList:
     """

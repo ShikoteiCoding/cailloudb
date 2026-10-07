@@ -69,3 +69,17 @@ def test_block_add_empty_value_is_valid():
 
     assert BlockReader(block_data).get(key, 0) == (value, 0, False)
     assert last_internal_key == internal_key
+
+
+def test_block_reader_get_non_existing_key():
+    block_builder = BlockBuilder(1024)
+
+    key, value = b"key1", b"val1"
+    internal_key = build_internal_key(key, 0, False)
+    block_builder.add(internal_key, value)
+
+    block_data, _ = block_builder.finalize()
+    block_reader = BlockReader(block_data)
+
+    assert block_reader.get(key, 0) == (value, 0, False)
+    assert block_reader.get(b"key2", 1) == (None, None, False)
