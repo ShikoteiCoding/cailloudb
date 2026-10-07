@@ -4,16 +4,15 @@ from pathlib import Path
 from typing import Iterator
 
 from constants import (
-    DEFAULT_BLOCK_SIZE,
-    INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
     INTERNAL_KEY_LEN_STRUCT,
-    KEY_METADATA_STRUCT,
-    LEN_KEY_METADATA,
-    MAGIC_NUMBER,
+    INTERNAL_KEY_METADATA_STRUCT,
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
+    SSTABLE_BLOCK_DEFAULT_SIZE,
     SSTABLE_FOOTER_STRUCT,
+    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
+    SSTABLE_MAGIC_NUMBER,
     SSTABLE_MAX_FILE_SIZE,
     TOMBSTONE,
-    VALUE_TYPE_DELETE,
 )
 from custom_types import SSTableEntry
 from lsm.block import BlockBuilder, BlockReader
@@ -26,7 +25,7 @@ class SSTableWriter:
         self,
         in_memory: bool,
         dir: Path | None = None,
-        block_size: int = DEFAULT_BLOCK_SIZE,
+        block_size: int = SSTABLE_BLOCK_DEFAULT_SIZE,
         max_file_size: int = SSTABLE_MAX_FILE_SIZE,
     ):
         self.in_memory = in_memory
@@ -76,13 +75,15 @@ class SSTableWriter:
                 out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
                 out.write(last_key)
                 out.write(
-                    INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(block_offset, block_len)
+                    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(
+                        block_offset, block_len
+                    )
                 )
             index_size = out.tell() - index_offset
 
             # Write footer
             footer_bytes = SSTABLE_FOOTER_STRUCT.pack(
-                index_offset, index_size, MAGIC_NUMBER
+                index_offset, index_size, SSTABLE_MAGIC_NUMBER
             )
             out.write(footer_bytes)
             out.seek(0)
@@ -159,7 +160,7 @@ class SSTable:
         footer_bytes = self.file.read(SSTABLE_FOOTER_STRUCT.size)
         index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(footer_bytes)
 
-        if magic != MAGIC_NUMBER:
+        if magic != SSTABLE_MAGIC_NUMBER:
             raise ValueError(f"Invalid magic number in SSTable: {self.path}")
 
         # Read index
@@ -178,10 +179,10 @@ class SSTable:
             cursor += key_len
 
             # Read the data block offset and length
-            blk_offset, blk_len = INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.unpack_from(
+            blk_offset, blk_len = SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.unpack_from(
                 index_bytes, cursor
             )
-            cursor += INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
+            cursor += SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
 
             self.index_keys.append(last_key)
             self.index_meta.append((blk_offset, blk_len))
@@ -248,7 +249,9 @@ class SSTable:
         if start_key is None:
             start_block_idx = 0
         else:
-            target_internal_key = start_key + (b"\x00" * KEY_METADATA_STRUCT.size)
+            target_internal_key = start_key + (
+                b"\x00" * INTERNAL_KEY_METADATA_STRUCT.size
+            )
             start_block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
 
             if start_block_idx >= len(self.index_keys):
@@ -261,7 +264,7 @@ class SSTable:
             block_reader = BlockReader(block_data)
 
             for table_internal_key, table_value in block_reader:
-                table_key = table_internal_key[:-LEN_KEY_METADATA]
+                table_key = table_internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
 
                 # Continue if start_key is greater
                 if start_key is not None and table_key < start_key:
@@ -279,7 +282,11 @@ class SSTable:
                 if table_seq_num > seq_num:
                     continue
 
-                val = TOMBSTONE if value_type == VALUE_TYPE_DELETE else table_value
+                val = (
+                    TOMBSTONE
+                    if value_type == INTERNAL_KEY_VALUE_TYPE_DELETE
+                    else table_value
+                )
                 yield SSTableEntry(key=table_key, seq_num=table_seq_num, value=val)
 
 

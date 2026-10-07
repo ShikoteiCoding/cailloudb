@@ -3,9 +3,9 @@ from typing import Iterator
 
 from constants import (
     INTERNAL_KEY_LEN_STRUCT,
-    KEY_METADATA_STRUCT,
-    VALUE_LEN_STRUCT,
-    VALUE_TYPE_DELETE,
+    INTERNAL_KEY_METADATA_STRUCT,
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
+    SSTABLE_BLOCK_VALUE_LEN_STRUCT,
 )
 from lsm.utils import extract_from_internal_key
 
@@ -43,7 +43,7 @@ class BlockBuilder:
         self.buffer.write(internal_key)
 
         # Write value
-        self.buffer.write(VALUE_LEN_STRUCT.pack(len(value)))
+        self.buffer.write(SSTABLE_BLOCK_VALUE_LEN_STRUCT.pack(len(value)))
         self.buffer.write(value)
 
         self.last_internal_key = internal_key
@@ -104,8 +104,8 @@ class BlockReader:
             cursor += key_len
 
             # Read value length
-            val_len = VALUE_LEN_STRUCT.unpack_from(self.data, cursor)[0]
-            cursor += VALUE_LEN_STRUCT.size
+            val_len = SSTABLE_BLOCK_VALUE_LEN_STRUCT.unpack_from(self.data, cursor)[0]
+            cursor += SSTABLE_BLOCK_VALUE_LEN_STRUCT.size
 
             # Read value
             value = self.data[cursor : cursor + val_len]
@@ -124,7 +124,7 @@ class BlockReader:
         """
         for internal_key, value in self:
             # Extract table_key
-            table_key = internal_key[: -KEY_METADATA_STRUCT.size]
+            table_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
 
             # Optimization: keys are sorted, if  table_key > target key, it is not in this block.
             if table_key > key:
@@ -134,7 +134,7 @@ class BlockReader:
                 _, table_seq_num, value_type = extract_from_internal_key(internal_key)
 
                 if table_seq_num <= seq_num:
-                    if value_type == VALUE_TYPE_DELETE:
+                    if value_type == INTERNAL_KEY_VALUE_TYPE_DELETE:
                         return b"", table_seq_num, True
                     return value, table_seq_num, False
 

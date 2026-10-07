@@ -1,5 +1,3 @@
-import pytest
-
 from cailloudb.lsm.block import BlockBuilder, BlockReader
 from cailloudb.lsm.utils import build_internal_key
 

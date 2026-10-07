@@ -2,8 +2,8 @@ import random
 from typing import Iterator
 
 from constants import (
-    LEN_METADATA,
-    MAX_SEQ_NUM,
+    INTERNAL_KEY_LEN_METADATA,
+    INTERNAL_KEY_MAX_SEQ_NUM,
     TOMBSTONE,
 )
 from custom_types import MemTableEntry
@@ -27,7 +27,7 @@ class _SkipNode:
         """
         Extracts the original User Key.
         """
-        return self.internal_key[:-LEN_METADATA]
+        return self.internal_key[:-INTERNAL_KEY_LEN_METADATA]
 
     @property
     def seq_num(self) -> int:
@@ -35,10 +35,10 @@ class _SkipNode:
         Extracts the 56-bit Sequence Number.
         """
         metadata_int = int.from_bytes(
-            self.internal_key[-LEN_METADATA:], byteorder="big"
+            self.internal_key[-INTERNAL_KEY_LEN_METADATA:], byteorder="big"
         )
-        inverted_seq = metadata_int >> LEN_METADATA
-        return MAX_SEQ_NUM - inverted_seq
+        inverted_seq = metadata_int >> INTERNAL_KEY_LEN_METADATA
+        return INTERNAL_KEY_MAX_SEQ_NUM - inverted_seq
 
 
 class SkipList:

@@ -1,10 +1,8 @@
-import bisect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
 from constants import DEFAULT_WAL, TOMBSTONE
 from custom_types import SeqNum
-from index import KeyIndex
 from lsm.lsmtree import LSMTree
 from wal import Wal
 

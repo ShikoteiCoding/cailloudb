@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.constants import MAGIC_NUMBER, SSTABLE_FOOTER_STRUCT, TOMBSTONE
+from cailloudb.constants import SSTABLE_FOOTER_STRUCT, SSTABLE_MAGIC_NUMBER, TOMBSTONE
 from cailloudb.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
@@ -273,7 +273,9 @@ def test_sstable_scan_all_occurence_of_a_key(
     ]
 
 
-def test_sstable_magic_number_fence(sstable_writer: SSTableWriter, memtable: MemTable):
+def test_sstable_SSTABLE_MAGIC_NUMBER_fence(
+    sstable_writer: SSTableWriter, memtable: MemTable
+):
     memtable.insert(b"key1", 0, b"val1")
 
     valid_sstable = sstable_writer.write(memtable, 1)[0]
@@ -282,13 +284,13 @@ def test_sstable_magic_number_fence(sstable_writer: SSTableWriter, memtable: Mem
     index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(
         valid_bytes[-SSTABLE_FOOTER_STRUCT.size :]
     )
-    assert magic == MAGIC_NUMBER
+    assert magic == SSTABLE_MAGIC_NUMBER
 
     reloaded_sstable = SSTable(io.BytesIO(valid_bytes), Path("valid_magic.sst"))
     assert reloaded_sstable.index_keys == valid_sstable.index_keys
     assert reloaded_sstable.index_meta == valid_sstable.index_meta
 
-    invalid_magic = (MAGIC_NUMBER + 1) & 0xFFFFFFFF
+    invalid_magic = (SSTABLE_MAGIC_NUMBER + 1) & 0xFFFFFFFF
     invalid_footer = SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, invalid_magic)
     invalid_bytes = valid_bytes[: -SSTABLE_FOOTER_STRUCT.size] + invalid_footer
 
