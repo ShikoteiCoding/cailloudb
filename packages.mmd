@@ -1,0 +1,60 @@
+classDiagram
+  class cailloudb {
+  }
+  class constants {
+  }
+  class custom_types {
+  }
+  class db {
+  }
+  class dbbuilder {
+  }
+  class dbreader {
+  }
+  class index {
+  }
+  class lsm {
+  }
+  class block {
+  }
+  class lsmtree {
+  }
+  class memtable {
+  }
+  class skiplist {
+  }
+  class sstable {
+  }
+  class utils {
+  }
+  class snapshot {
+  }
+  class store {
+  }
+  class wal {
+  }
+  class write_batch {
+  }
+  cailloudb --> db
+  cailloudb --> dbbuilder
+  cailloudb --> dbreader
+  cailloudb --> snapshot
+  cailloudb --> store
+  cailloudb --> wal
+  cailloudb --> write_batch
+  db --> dbreader
+  db --> snapshot
+  dbbuilder --> db
+  store --> constants
+  store --> custom_types
+  store --> index
+  store --> lsmtree
+  store --> wal
+  wal --> write_batch
+  write_batch --> constants
+  db ..> store
+  db ..> write_batch
+  dbbuilder ..> store
+  dbreader ..> store
+  snapshot ..> store
+  store ..> write_batch
