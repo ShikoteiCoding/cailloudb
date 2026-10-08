@@ -5,7 +5,7 @@ from custom_types import MemTableEntry
 from lsm.skiplist import SkipList
 
 
-class MemTable:
+class MemTable(Iterator):
     """
     In-memory structure to keep key-value pairs (sorted by key).
 
@@ -64,8 +64,12 @@ class MemTable:
         Behavior:
             Ordering guarantee as the SkipList property
         """
-        for entry in self.skiplist:
-            yield entry
+        # for entry in self.skiplist:
+        #     yield entry
+        return self.skiplist.__iter__()
+
+    def __next__(self):
+        return self.skiplist.__next__()
 
     @property
     def bytes_size(self) -> int:

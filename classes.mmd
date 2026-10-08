@@ -131,7 +131,7 @@ classDiagram
     seq_num : int
     value : bytes
   }
-  class SSTableWriter {
+  class TableBuilder {
     block_size : int
     dir : Path | None
     in_memory : bool
@@ -221,7 +221,7 @@ classDiagram
   MemTable --* LSMTree : memtable
   SkipList --* MemTable : skiplist
   _SkipNode --* SkipList : header
-  SSTableWriter --* LSMTree : sstable_writer
+  TableBuilder --* LSMTree : sstable_writer
   Wal --* InMemoryStore : _wal
   BaseStore --o Db : store
   BaseStore --o DbBuilder : store
