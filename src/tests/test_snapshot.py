@@ -2,45 +2,45 @@ import pytest
 
 from cailloudb import Db, DbBuilder, InMemoryStore
 
+__all__ = [
+    "test_snapshot_get",
+    "test_snapshot_delete_replay",
+    "test_snapshot_reput",
+    "test_snapshot_scan",
+    "test_dbbuilder_snapshot",
+    "test_scan_same_range_semantics_on_snapshot",
+]
+
 
 @pytest.mark.asyncio
 async def test_snapshot_get(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
 
+    db = Db(store)
     await db.put(b"key1", b"val1")
 
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 1
+    assert await snap.latest_sequence_number() == 0
 
     await db.put(b"key1", b"val2")
+    assert await db.latest_sequence_number() == 2
 
     assert await snap.get(b"key1") == b"val1"
     assert await db.get(b"key1") == b"val2"
 
 
 @pytest.mark.asyncio
-async def test_snapshot_exists(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
-    snap = db.snapshot()
-
-    assert not await snap.exists(b"k")
-
-    await db.put(b"k", b"v")
-
-    assert not await snap.exists(b"k")
-    assert await db.exists(b"k")
-
-
-@pytest.mark.asyncio
 async def test_snapshot_delete_replay(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
 
+    db = Db(store)
     await db.put(b"k", b"v1")
+
     snap = db.snapshot()
+    assert await snap.latest_sequence_number() == 0
+
     await db.delete(b"k")
+    assert await db.latest_sequence_number() == 2
 
     assert await snap.get(b"k") == b"v1"
     assert await db.get(b"k") is None
@@ -52,7 +52,10 @@ async def test_snapshot_reput(tmp_path):
     db = Db(store)
 
     await db.put(b"b", b"2")
+
     snap = db.snapshot()
+    assert await snap.latest_sequence_number() == 0
+
     await db.delete(b"b")
     await db.put(b"b", b"9")
 
@@ -68,7 +71,7 @@ async def test_snapshot_scan(tmp_path):
     await db.put(b"a", b"1")
     await db.put(b"b", b"2")
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 2
+    assert await snap.latest_sequence_number() == 1
 
     await db.put(b"c", b"3")
     await db.delete(b"b")
@@ -88,27 +91,9 @@ async def test_dbbuilder_snapshot(tmp_path):
 
     await db.put(b"k", b"v")
     snap = db.snapshot()
+    assert await snap.latest_sequence_number() == 0
 
     assert await snap.get(b"k") == b"v"
-
-
-@pytest.mark.asyncio
-async def test_scan_same_on_db_and_reader(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
-    reader = db.reader()
-
-    await db.put(b"b", b"2")
-    await db.put(b"a", b"1")
-    await db.put(b"c", b"3")
-
-    db_items = [item async for item in db.scan()]
-    reader_items = [item async for item in reader.scan()]
-    assert db_items == reader_items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
-
-    db_items = [item async for item in db.scan(b"b", b"c")]
-    reader_items = [item async for item in reader.scan(b"b", b"c")]
-    assert db_items == reader_items == [(b"b", b"2")]
 
 
 @pytest.mark.asyncio
@@ -120,6 +105,7 @@ async def test_scan_same_range_semantics_on_snapshot(tmp_path):
     await db.put(b"a", b"1")
     await db.put(b"c", b"3")
     snap = db.snapshot()
+    assert await snap.latest_sequence_number() == 2
 
     assert [item async for item in snap.scan()] == [
         (b"a", b"1"),

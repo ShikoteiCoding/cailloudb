@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 from constants import DEFAULT_WAL, TOMBSTONE
 from custom_types import SeqNum
 from index import KeyIndex
+from lsm.lsmtree import LSMTree
 from wal import Wal
 
 if TYPE_CHECKING:
@@ -21,7 +22,7 @@ class BaseStore(ABC):
     async def get(self, key: bytes) -> bytes: ...
 
     @abstractmethod
-    async def get_at(self, key: bytes, max_seq: int) -> bytes: ...
+    async def get_at(self, key: bytes, *, seq_num: int) -> bytes: ...
 
     @abstractmethod
     async def put(self, key: bytes, val: bytes): ...
@@ -30,27 +31,16 @@ class BaseStore(ABC):
     async def delete(self, key: bytes): ...
 
     @abstractmethod
-    async def exists(self, key: bytes) -> bool: ...
-
-    @abstractmethod
-    async def exists_at(self, key: bytes, max_seq: int) -> bool: ...
-
-    @abstractmethod
     async def write(self, batch: WriteBatch): ...
 
     @abstractmethod
     def scan(
-        self,
-        start: bytes | None = None,
-        end: bytes | None = None,
+        self, start: bytes | None, end: bytes | None
     ) -> AsyncIterator[tuple[bytes, bytes]]: ...
 
     @abstractmethod
     def scan_at(
-        self,
-        max_seq: int,
-        start: bytes | None = None,
-        end: bytes | None = None,
+        self, start: bytes | None, end: bytes | None, *, seq_num: int
     ) -> AsyncIterator[tuple[bytes, bytes]]: ...
 
     @abstractmethod
@@ -58,44 +48,19 @@ class BaseStore(ABC):
 
 
 class InMemoryStore(BaseStore):
-    #: Key → event history; put has "bytes", delete does not
-    __d: dict[bytes, list[dict]]
+    #: LSMTree-based storage
+    __tree: LSMTree
 
-    #: Sorted key index for live range scans
-    __index: KeyIndex
-
-    #: Write-ahead log
+    #: Write-ahead log writer
     _wal: Wal
 
     def __init__(self, wal_path: Path = DEFAULT_WAL):
         super().__init__()
 
-        self.__d = {}
-        self.__index = KeyIndex()
+        self.__tree = LSMTree()
         self._seq = SeqNum()
 
         self._wal = Wal(wal_path)
-
-    def _resolve_at(self, key: bytes, max_seq: int) -> bytes | None:
-        if key not in self.__d:
-            return None
-
-        for version in reversed(self.__d[key]):
-            if version["seq"] >= max_seq:
-                continue  # move to older versions
-            if "bytes" in version:
-                return version["bytes"]
-            else:
-                return None
-
-        return None
-
-    def _exists_at(self, key: bytes, max_seq: int) -> bool:
-        value = self._resolve_at(key, max_seq)
-        return True if value else False
-
-    def _keys_at(self, max_seq: int) -> list[bytes]:
-        return sorted(k for k in self.__d if self._exists_at(k, max_seq))
 
     async def get(self, key: bytes) -> bytes | None:
         """
@@ -103,24 +68,21 @@ class InMemoryStore(BaseStore):
 
         If the key is not found, return None.
         """
-        return self._resolve_at(key, int(self._seq))
+        return self.__tree.get(key, int(self._seq))
 
-    async def get_at(self, key: bytes, max_seq: int) -> bytes | None:
-        return self._resolve_at(key, max_seq)
+    async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None:
+        """
+        Positional Get key.
+
+        If the key is not found, return None.
+        """
+        return self.__tree.get(key, seq_num)
 
     def _apply_put(self, key: bytes, seq_num: int, value: bytes):
-        if key not in self.__d:
-            self.__d[key] = []
-            self.__index.insert(key)
-
-        self.__d[key].append({"seq": seq_num, "bytes": value})
+        self.__tree.put(key, seq_num, value)
 
     def _apply_delete(self, key: bytes, seq_num: int):
-        if key not in self.__d:
-            self.__d[key] = []
-            self.__index.insert(key)
-
-        self.__d[key].append({"seq": seq_num})
+        self.__tree.delete(key, seq_num)
 
     async def put(self, key: bytes, value: bytes):
         """
@@ -164,44 +126,29 @@ class InMemoryStore(BaseStore):
                 self._apply_put(key, int(self._seq), value)
             self._seq.increment()
 
-    async def exists(self, key: bytes) -> bool:
-        return self._exists_at(key, int(self._seq))
-
-    async def exists_at(self, key: bytes, max_seq: int) -> bool:
-        return self._exists_at(key, max_seq)
-
     async def scan(
         self,
         start: bytes | None = None,
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
-        for key in self.__index.range(start, end):
-            value = self._resolve_at(key, int(self._seq))
-            if value:
-                yield key, value
+        """
+        Scan values between inclusive start and exclusive end.
+        """
+        for key, value in self.__tree.scan(start, end, int(self._seq)):
+            yield key, value
 
     async def scan_at(
-        self,
-        max_seq: int,
-        start: bytes | None = None,
-        end: bytes | None = None,
+        self, start: bytes | None = None, end: bytes | None = None, *, seq_num: int
     ) -> AsyncIterator[tuple[bytes, bytes]]:
-        keys = self._keys_at(max_seq)
-        lo = bisect.bisect_left(keys, start) if start is not None else 0
-        hi = bisect.bisect_left(keys, end) if end is not None else len(keys)
-        for key in keys[lo:hi]:
-            value = self._resolve_at(key, max_seq)
-            if value:
-                yield key, value
+        """
+        Positional scan values between inclusive start and exclusive end.
+        """
+        for key, value in self.__tree.scan(start, end, seq_num):
+            yield key, value
 
     async def latest_sequence_number(self) -> int:
         return int(self._seq)
 
 
 class DiskStore:
-    @classmethod
-    def resolve(cls, addr: str) -> BaseStore:
-        if addr == ":memory:":
-            return InMemoryStore()
-
-        raise ValueError("Address format {} failed to resolve".format(addr))
+    NotImplementedError()
