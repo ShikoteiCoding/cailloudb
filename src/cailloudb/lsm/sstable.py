@@ -34,7 +34,7 @@ class SSTableWriter:
         self.max_file_size = max_file_size
 
         # TODO: Move to settings once available
-        assert max_file_size > block_size, "File size must be greater then block size"
+        assert max_file_size > block_size, "File size must be greater than block size"
 
     def write(self, memtable: MemTable, file_id: int) -> list[SSTable]:
         """

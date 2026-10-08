@@ -1,8 +1,9 @@
 import heapq
 from typing import Iterator
 
-from constants import TOMBSTONE
+from constants import MEMTABLE_MAX_BYTES_SIZE, SSTABLE_MAX_FILE_SIZE, TOMBSTONE
 from custom_types import MemTableEntry, SSTableEntry
+from lsm.compactor import SSTableCompactor
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable, SSTableWriter
 
@@ -15,22 +16,40 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
-    def __init__(self, memtable_size: int = 32 * 1024 * 1024):
+    memtable_size: int
+    sstable_size: int
+
+    #: Active memtable instance for in-memory O(1) writes
+    memtable: MemTable
+
+    #: Immutable memtables waiting to be flushed
+    immutable_memtables: list[MemTable]
+
+    #: SSTable writer
+    sstable_writer: SSTableWriter
+
+    #: SSTable compactor
+    sstable_compactor: SSTableCompactor
+
+    #: List of SSTables
+    sstables: list[SSTable]
+
+    #: Next file id for .sst
+    next_file_id: int
+
+    def __init__(
+        self,
+        memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
+        sstable_size: int = SSTABLE_MAX_FILE_SIZE,
+    ):
         self.memtable_size = memtable_size
+        self.sstable_size = sstable_size
 
-        #: Active memtable instance for in-memory O(1) writes
         self.memtable = MemTable(max_bytes_size=memtable_size)
-
-        #: Immutable memtables waiting to be flushed
-        self.immutable_memtables: list[MemTable] = []
-
-        #: SSTable writer
-        self.sstable_writer: SSTableWriter = SSTableWriter(in_memory=True)
-
-        #: List of SSTables
-        self.sstables: list[SSTable] = []
-
-        #: Next file id for .sst
+        self.immutable_memtables = []
+        self.sstable_writer = SSTableWriter(in_memory=True)
+        self.sstable_compactor = SSTableCompactor()
+        self.sstables = []
         self.next_file_id = 1
 
     def put(self, key: bytes, seq_num: int, value: bytes) -> None:
@@ -151,9 +170,7 @@ class LSMTree:
 
     def _flush(self) -> None:
         """
-        Background task to write immutable memtables to disk.
-
-        TODO: implement first compaction
+        Sync task to write immutable memtables to disk.
         """
         if not self.immutable_memtables:
             return
@@ -166,3 +183,11 @@ class LSMTree:
             for sstable in sstables:
                 self.sstables.append(sstable)
             # TODO: Delete the corresponding wal file ?
+
+    def _compact(self) -> None:
+        """
+        Sync task to compact sstables into a single sstable.
+        """
+
+        level = 1
+        writer = SSTableWriter(in_memory=True, max_file_size=2 * self.sstable_size)
