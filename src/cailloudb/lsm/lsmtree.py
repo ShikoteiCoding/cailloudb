@@ -113,23 +113,20 @@ class LSMTree:
                 # Trick, reverse the seq num to ensure last wins
                 yield (entry["key"], -entry["seq_num"], entry["value"])
 
-        # K-Way merge of all sorted streams
+        # K-way merge
         merged_stream = heapq.merge(*[iterator_agg(it) for it in iterators])
 
-        # Keep last processed key to avoid dedup
         last_processed_key = None
 
-        # For all in-order gathered keys
         for key, neg_seq, value in merged_stream:
             entry_seq = -neg_seq
 
-            # Skip newer versions
+            
             if entry_seq > seq_num:
-                continue
+                continue # Skip newer versions
 
-            # Skip if key already processed to avoid dedup
             if key == last_processed_key:
-                continue
+                continue # Skip key duplicates
 
             # Mask internal tombstone to downstream
             if value != TOMBSTONE:
@@ -143,17 +140,11 @@ class LSMTree:
         """
         self.immutable_memtables.append(self.memtable)
         self.memtable = MemTable(max_bytes_size=self.memtable_size)
+        self._sync_flush()
 
-        # TODO: Rotate the wal file ?
-
-        # TODO: should it run in the background ?
-        self._flush()
-
-    def _flush(self) -> None:
+    def _sync_flush(self) -> None:
         """
-        Background task to write immutable memtables to disk.
-
-        TODO: implement first compaction
+        Sync in-process task to write immutable memtables to disk.
         """
         if not self.immutable_memtables:
             return
@@ -165,4 +156,3 @@ class LSMTree:
 
             for sstable in sstables:
                 self.sstables.append(sstable)
-            # TODO: Delete the corresponding wal file ?
