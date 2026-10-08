@@ -299,6 +299,6 @@ def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
     lsm = LSMTree()
 
-    lsm._flush()
+    lsm._sync_flush()
 
     assert len(lsm.sstables) == 0
