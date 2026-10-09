@@ -3,5 +3,7 @@
 .vscode
 .pytest_cache
 __pycache__
-*.mmd
 test.py
+.coverage
+htmlcov
+coverage.md

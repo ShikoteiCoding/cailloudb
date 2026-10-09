@@ -15,9 +15,6 @@ class DbReader:
     async def get(self, key: bytes) -> bytes:
         return await self._store.get(key)
 
-    async def exists(self, key: bytes) -> bool:
-        return await self._store.exists(key)
-
     def scan(
         self,
         start: bytes | None = None,

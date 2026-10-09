@@ -30,9 +30,6 @@ class Db:
     async def delete(self, key: bytes):
         await self.store.delete(key)
 
-    async def exists(self, key: bytes):
-        return await self.store.exists(key)
-
     async def shutdown(self): ...
 
     async def write(self, batch: WriteBatch):

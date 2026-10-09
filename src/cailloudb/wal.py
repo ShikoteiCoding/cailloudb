@@ -18,7 +18,7 @@ class Wal:
 
     Logical records
     Single payload
-      [8 bytes sequence number][4 bytes key length][4 bytes val length][key bytes][val bytes]
+      [8 bytes sequence number][4 bytes key length][4 bytes value length][key bytes][value bytes]
     Batch payload:
       [WriteBatch payload]
 
@@ -109,20 +109,20 @@ class Wal:
         self,
         key: bytes | WriteBatch,
         seq_num: int,
-        val: bytes | None = None,
+        value: bytes | None = None,
     ) -> None:
         if isinstance(key, WriteBatch):
             body = bytes(key._buf)
             is_batch = True
         else:
-            if val is None:
-                val = b""
+            if value is None:
+                value = b""
             body = (
                 self._SEQ.pack(seq_num)
                 + self._LEN.pack(len(key))
-                + self._LEN.pack(len(val))
+                + self._LEN.pack(len(value))
                 + key
-                + val
+                + value
             )
             if self._HEADER + len(body) > self._BLOCK_SIZE:
                 raise ValueError("wal single record exceeds block")
@@ -183,8 +183,8 @@ class Wal:
         inner += 4
         key = bytes(body[inner : inner + key_len])
         inner += key_len
-        val = bytes(body[inner : inner + val_len])
-        yield key, seq_num, val
+        value = bytes(body[inner : inner + val_len])
+        yield key, seq_num, value
 
     def _batch_ops(self, batch_body: bytes) -> Iterator[tuple[bytes, int, bytes]]:
         (seq_num,) = WriteBatch._SEQ.unpack_from(batch_body, 0)
@@ -212,7 +212,7 @@ class Wal:
                 elif kind == self._BATCH_KIND_FIRST:
                     pending = bytearray(payload)
                 else:
-                    raise ValueError("wal record kind")
+                    raise ValueError("Unknown `kind` from WAL file, probably because the file is corrupted.")
                 continue
             if kind == self._BATCH_KIND_MIDDLE or kind == self._BATCH_KIND_LAST:
                 pending += payload
@@ -220,7 +220,7 @@ class Wal:
                     yield from self._batch_ops(bytes(pending))
                     pending = None
                 continue
-            raise ValueError("wal record kind")
+            raise ValueError("Unknown `kind` from WAL file, probably because the file is corrupted.")
 
     # TODO: replay these sequences into the store after a crash
     async def recover(self) -> AsyncIterator[tuple[bytes, int, bytes]]:

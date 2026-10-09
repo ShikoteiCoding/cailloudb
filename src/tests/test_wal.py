@@ -5,6 +5,28 @@ import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
 
+__all__ = [
+    "test_recover_empty_wal",
+    "test_append_put_then_recover",
+    "test_append_none_value_then_recover",
+    "test_append_delete_then_recover",
+    "test_append_writes_length_prefixed_record",
+    "test_append_preserves_order",
+    "test_clear_drops_logged_records",
+    "test_append_after_clear",
+    "test_store_put_and_delete_append_to_wal",
+    "test_store_write_appends_one_batch_record",
+    "test_recover_batch_assigns_one_sequence_per_operation",
+    "test_append_batch_of_hundreds_of_records",
+    "test_recover_replays_into_empty_store",
+    "test_recover_returns_records_before_a_short_tail",
+    "test_recover_returns_records_before_a_partial_header",
+    "test_recover_rejects_unknown_record_kind",
+    "test_checksum_mismatch_before_end_of_file_raises",
+    "test_checksum_mismatch_on_the_last_record_stops",
+    "test_append_rejects_payload_longer_than_uint16",
+]
+
 _CRC = struct.Struct(">I")
 _PLEN = struct.Struct(">H")
 _SEQ = struct.Struct(">Q")
@@ -26,6 +48,15 @@ async def test_append_put_then_recover(tmp_path):
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 0, b"1")]
+
+
+@pytest.mark.asyncio
+async def test_append_none_value_then_recover(tmp_path):
+    wal = Wal(tmp_path / "wal")
+    await wal.append(b"a", 0, None)
+
+    records = [record async for record in wal.recover()]
+    assert records == [(b"a", 0, b"")]
 
 
 @pytest.mark.asyncio
@@ -208,6 +239,22 @@ async def test_recover_returns_records_before_a_partial_header(tmp_path):
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 1, b"1")]
+
+
+@pytest.mark.asyncio
+async def test_recover_rejects_unknown_record_kind(tmp_path):
+    path = tmp_path / "wal"
+    wal = Wal(path)
+
+    kind = b"\xFF"
+    payload = b"\x00" * 24
+    record_data = kind + payload
+    checksum = zlib.crc32(record_data) & 0xFFFFFFFF
+    frame = _CRC.pack(checksum) + _PLEN.pack(len(payload)) + record_data
+    path.write_bytes(frame)
+
+    with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):
+        _ = [record async for record in wal.recover()]
 
 
 @pytest.mark.asyncio
