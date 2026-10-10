@@ -3,6 +3,20 @@ from pathlib import Path
 
 TOMBSTONE = b"__INTERNAL_TOMBSTONE_MARKER__"
 DEFAULT_WAL = Path("/tmp/cailloudb-data") / "wal"
+
+WAL_BLOCK_SIZE = 32 * 1024
+WAL_HEADER_SIZE = 7
+WAL_CRC_STRUCT = struct.Struct(">I")
+WAL_PAYLOAD_LEN_STRUCT = struct.Struct(">H")
+WAL_SEQ_STRUCT = struct.Struct(">Q")
+WAL_LEN_STRUCT = struct.Struct(">I")
+
+WAL_SINGLE_KIND = 0
+WAL_BATCH_KIND_FULL = 1
+WAL_BATCH_KIND_FIRST = 2
+WAL_BATCH_KIND_MIDDLE = 3
+WAL_BATCH_KIND_LAST = 4
+
 MEMTABLE_MAX_BYTES_SIZE = 32 * 1024 * 1024
 
 # Internal Key
