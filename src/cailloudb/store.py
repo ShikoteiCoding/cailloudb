@@ -1,12 +1,9 @@
-import bisect
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
-from constants import DEFAULT_WAL, TOMBSTONE
+from constants import DEFAULT_WAL
 from custom_types import SeqNum
-from index import KeyIndex
 from lsm.lsmtree import LSMTree
-from wal import Wal
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,16 +48,11 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    #: Write-ahead log writer
-    _wal: Wal
-
     def __init__(self, wal_path: Path = DEFAULT_WAL):
         super().__init__()
 
-        self.__tree = LSMTree()
+        self.__tree = LSMTree(wal_path=wal_path)
         self._seq = SeqNum()
-
-        self._wal = Wal(wal_path)
 
     async def get(self, key: bytes) -> bytes | None:
         """
@@ -78,12 +70,6 @@ class InMemoryStore(BaseStore):
         """
         return self.__tree.get(key, seq_num)
 
-    def _apply_put(self, key: bytes, seq_num: int, value: bytes):
-        self.__tree.put(key, seq_num, value)
-
-    def _apply_delete(self, key: bytes, seq_num: int):
-        self.__tree.delete(key, seq_num)
-
     async def put(self, key: bytes, value: bytes):
         """
         Put a key/value pair.
@@ -93,8 +79,7 @@ class InMemoryStore(BaseStore):
         if not isinstance(key, bytes):
             raise KeyError("Type {} invalid for key.".format(type(key)))
         seq_num = int(self._seq)
-        await self._wal.append(key, seq_num, value)
-        self._apply_put(key, seq_num, value)
+        await self.__tree.put(key, seq_num, value)
         self._seq.increment()
 
     async def delete(self, key: bytes):
@@ -104,8 +89,7 @@ class InMemoryStore(BaseStore):
         If the key doesn't exist, a deletion marker is created nonetheless.
         """
         seq_num = int(self._seq)
-        await self._wal.append(key, seq_num, b"")
-        self._apply_delete(key, seq_num)
+        await self.__tree.delete(key, seq_num)
         self._seq.increment()
 
     async def write(self, batch: WriteBatch):
@@ -117,13 +101,8 @@ class InMemoryStore(BaseStore):
         # - Failure to apply this method should be retried during system recovery (crash).
         # - MVCC safeguards readers consistency during write runtime.
         seq_num = int(self._seq)
-        batch.sync_header(seq_num)
-        await self._wal.append(batch, seq_num)
-        for key, value in batch:
-            if value == TOMBSTONE:
-                self._apply_delete(key, int(self._seq))
-            else:
-                self._apply_put(key, int(self._seq), value)
+        applied = await self.__tree.write(batch, seq_num)
+        for _ in range(applied):
             self._seq.increment()
 
     async def scan(
