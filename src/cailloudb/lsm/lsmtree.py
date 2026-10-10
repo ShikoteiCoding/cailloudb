@@ -76,10 +76,7 @@ class LSMTree:
             await self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
-            if value == TOMBSTONE:
-                self._insert(key, seq_num, TOMBSTONE)
-            else:
-                self._insert(key, seq_num, value)
+            self._insert(key, seq_num, value)
             seq_num += 1
             applied += 1
         return applied
