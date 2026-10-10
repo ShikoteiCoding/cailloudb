@@ -79,7 +79,7 @@ class InMemoryStore(BaseStore):
         if not isinstance(key, bytes):
             raise KeyError("Type {} invalid for key.".format(type(key)))
         seq_num = int(self._seq)
-        self.__tree.put(key, seq_num, value)
+        await self.__tree.put(key, seq_num, value)
         self._seq.increment()
 
     async def delete(self, key: bytes):
@@ -89,7 +89,7 @@ class InMemoryStore(BaseStore):
         If the key doesn't exist, a deletion marker is created nonetheless.
         """
         seq_num = int(self._seq)
-        self.__tree.delete(key, seq_num)
+        await self.__tree.delete(key, seq_num)
         self._seq.increment()
 
     async def write(self, batch: WriteBatch):
@@ -101,7 +101,7 @@ class InMemoryStore(BaseStore):
         # - Failure to apply this method should be retried during system recovery (crash).
         # - MVCC safeguards readers consistency during write runtime.
         seq_num = int(self._seq)
-        applied = self.__tree.write(batch, seq_num)
+        applied = await self.__tree.write(batch, seq_num)
         for _ in range(applied):
             self._seq.increment()
 

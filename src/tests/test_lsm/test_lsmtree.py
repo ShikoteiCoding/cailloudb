@@ -24,58 +24,62 @@ __all__ = [
 ]
 
 
-def test_lsmtree_internals_iteratively_0_record_memtable():
+@pytest.mark.asyncio
+async def test_lsmtree_internals_iteratively_0_record_memtable():
     lsmtree = LSMTree(10)  # should be full for each record
 
-    lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 1
 
-    lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 2
     assert len(lsmtree.sstables[0].index_keys) == 1
 
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 3
     assert len(lsmtree.sstables[0].index_keys) == 1
 
 
-def test_lsmtree_internals_iteratively_1_records_memtables():
+@pytest.mark.asyncio
+async def test_lsmtree_internals_iteratively_1_records_memtables():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree.memtable) == 1
     assert len(lsmtree.sstables) == 0
 
-    lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
     assert len(lsmtree.sstables) == 1
     assert len(lsmtree.sstables[0].index_keys) == 1
 
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 1
     assert len(lsmtree.sstables) == 1
     assert len(lsmtree.sstables[0].index_keys) == 1
 
 
-def test_lsmtree_get_from_skiplist():
+@pytest.mark.asyncio
+async def test_lsmtree_get_from_skiplist():
     lsmtree = LSMTree()
 
-    lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", 0, b"val1")
 
     value = lsmtree.get(b"key1", 0)
 
     assert value == b"val1"
 
 
-def test_lsmtree_get_from_sstable_because_of_spill():
+@pytest.mark.asyncio
+async def test_lsmtree_get_from_sstable_because_of_spill():
     lsmtree = LSMTree(10)  # should be full for each record
 
-    lsmtree.put(b"key1", 0, b"val1")
-    lsmtree.put(b"key2", 1, b"val2")
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
 
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
@@ -98,12 +102,13 @@ def test_lsmtree_get_from_sstable_because_of_spill():
     )
 
 
-def test_lsmtree_get_from_sstable_or_skiplist():
+@pytest.mark.asyncio
+async def test_lsmtree_get_from_sstable_or_skiplist():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.put(b"key1", 0, b"val1")
-    lsmtree.put(b"key2", 1, b"val2")
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
 
     # Each insertion immediately fills the active skiplist
     # SSTable are then flushed
@@ -132,24 +137,26 @@ def test_lsmtree_get_from_sstable_or_skiplist():
     )
 
 
-def test_lsm_delete_from_sstables_or_skiplist():
+@pytest.mark.asyncio
+async def test_lsm_delete_from_sstables_or_skiplist():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.delete(b"key1", 0)
-    lsmtree.delete(b"key2", 1)
-    lsmtree.delete(b"key3", 2)
+    await lsmtree.delete(b"key1", 0)
+    await lsmtree.delete(b"key2", 1)
+    await lsmtree.delete(b"key3", 2)
 
     assert lsmtree.get(b"key1", 2) is None
     assert lsmtree.get(b"key2", 2) is None
     assert lsmtree.get(b"key3", 2) is None
 
 
-def test_lsmtree_scan_fixed_range():
+@pytest.mark.asyncio
+async def test_lsmtree_scan_fixed_range():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.put(b"key1", 0, b"val1")
-    lsmtree.put(b"key2", 1, b"val2")
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
 
     # Test inclusive
     result = [item for item in lsmtree.scan(b"key", b"key4", 2)]
@@ -180,12 +187,13 @@ def test_lsmtree_scan_fixed_range():
     ]
 
 
-def test_lsmtree_scan_unbounded_range():
+@pytest.mark.asyncio
+async def test_lsmtree_scan_unbounded_range():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.put(b"key1", 0, b"val1")
-    lsmtree.put(b"key2", 1, b"val2")
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
 
     # Test unbounded end_key
     result = [item for item in lsmtree.scan(b"key1", None, 2)]
@@ -212,12 +220,13 @@ def test_lsmtree_scan_unbounded_range():
     ]
 
 
-def test_lsmtree_scan_max_seq():
+@pytest.mark.asyncio
+async def test_lsmtree_scan_max_seq():
     lsmtree = LSMTree(30)  # should hold only 1 record
 
-    lsmtree.put(b"key1", 0, b"val1")
-    lsmtree.put(b"key2", 1, b"val2")
-    lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
 
     # Test fixed range
     result = [item for item in lsmtree.scan(b"key1", b"key4", 1)]

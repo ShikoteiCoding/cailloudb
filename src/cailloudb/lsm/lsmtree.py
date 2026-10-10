@@ -43,27 +43,29 @@ class LSMTree:
         #: Next file id for .sst
         self.next_file_id = 1
 
-    def put(self, key: bytes, seq_num: int, value: bytes) -> None:
+    async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Put a key-value pair into the currently active memtable.
         """
         if self._wal is not None:
-            self._wal.append(key, seq_num, value)
-        self.memtable.insert(key, seq_num, value)
-        if self.memtable.is_full():
-            self._rotate_memtable()
+            await self._wal.append(key, seq_num, value)
+        self._insert(key, seq_num, value)
 
-    def delete(self, key: bytes, seq_num: int) -> None:
+    async def delete(self, key: bytes, seq_num: int) -> None:
         """
         Syntactic sugar to put a tombstone marker.
         """
         if self._wal is not None:
-            self._wal.append(key, seq_num, b"")
-        self.memtable.insert(key, seq_num, TOMBSTONE)
+            await self._wal.append(key, seq_num, b"")
+        self._insert(key, seq_num, TOMBSTONE)
+
+    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+        """Apply one operation to memtable"""
+        self.memtable.insert(key, seq_num, value)
         if self.memtable.is_full():
             self._rotate_memtable()
 
-    def write(self, batch: WriteBatch, seq_num: int) -> int:
+    async def write(self, batch: WriteBatch, seq_num: int) -> int:
         """
         Apply each operation in the batch, starting at `seq_num`.
 
@@ -71,7 +73,7 @@ class LSMTree:
         """
         batch.sync_header(seq_num)
         if self._wal is not None:
-            self._wal.record(batch, seq_num)
+            await self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
             if value == TOMBSTONE:
