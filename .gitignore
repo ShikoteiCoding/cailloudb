@@ -7,3 +7,4 @@ test.py
 .coverage
 htmlcov
 coverage.md
+.DS_Store

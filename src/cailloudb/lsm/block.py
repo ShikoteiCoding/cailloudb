@@ -1,16 +1,18 @@
 import io
+from typing import Iterator
 
 from constants import (
     INTERNAL_KEY_LEN_STRUCT,
-    KEY_METADATA_STRUCT,
-    MAX_SEQ_NUM,
-    VALUE_LEN_STRUCT,
+    INTERNAL_KEY_METADATA_STRUCT,
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
+    SSTABLE_BLOCK_VALUE_LEN_STRUCT,
 )
+from lsm.utils import extract_from_internal_key
 
 
 class BlockBuilder:
     """
-    SSTable Data Block writer.
+    SSTable Data Block Writer.
     """
 
     #: Target block size (can be spilled over)
@@ -20,6 +22,8 @@ class BlockBuilder:
     buffer: io.BytesIO
 
     #: Last Internal Key for Sparse Index statistics
+    #: For updates, this is the "oldest" because of inversion
+    #: IK(b"key1", 0) becomes greater than IK(b"key1", 1)
     last_internal_key: bytes
 
     def __init__(self, block_size: int):
@@ -34,22 +38,21 @@ class BlockBuilder:
         Record encoding:
             [Key length][Internal Key][Value length][Value]
         """
-        # 1. Write Key Length + Key
+        # Write key
         self.buffer.write(INTERNAL_KEY_LEN_STRUCT.pack(len(internal_key)))
         self.buffer.write(internal_key)
 
-        # 2. Write Value Length + Value
-        self.buffer.write(VALUE_LEN_STRUCT.pack(len(value)))
+        # Write value
+        self.buffer.write(SSTABLE_BLOCK_VALUE_LEN_STRUCT.pack(len(value)))
         self.buffer.write(value)
 
-        # 3. Update the last key (used by the writer for the Sparse Index)
         self.last_internal_key = internal_key
 
     def is_full(self) -> bool:
         """
         Returns True if the block has reached the target size.
 
-        Note: Blocks will be slightly larger than block_size because we
+        Note: Blocks can be larger than block_size because we
         finish writing a full record before checking this.
         """
         return self.buffer.tell() >= self.target_block_size
@@ -57,9 +60,9 @@ class BlockBuilder:
     def is_empty(self) -> bool:
         return self.buffer.tell() == 0
 
-    def reset(self) -> tuple[bytes, bytes]:
+    def finalize(self) -> tuple[bytes, bytes]:
         """
-        Returns the serialized block data and resets the buffer.
+        Returns the finalized block data and resets the buffer.
         """
         block_data = self.buffer.getvalue()
         last_internal_key = self.last_internal_key
@@ -85,26 +88,26 @@ class BlockReader:
         self.data = block_data
         self.size = len(block_data)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         """
         Iterates through the packed records inside this specific block.
         """
         cursor = 0
 
         while cursor < self.size:
-            # Read Key Length
+            # Read key length
             key_len = INTERNAL_KEY_LEN_STRUCT.unpack_from(self.data, cursor)[0]
             cursor += INTERNAL_KEY_LEN_STRUCT.size
 
-            # Read Key
+            # Read key
             internal_key = self.data[cursor : cursor + key_len]
             cursor += key_len
 
-            # Read Value Length
-            val_len = VALUE_LEN_STRUCT.unpack_from(self.data, cursor)[0]
-            cursor += VALUE_LEN_STRUCT.size
+            # Read value length
+            val_len = SSTABLE_BLOCK_VALUE_LEN_STRUCT.unpack_from(self.data, cursor)[0]
+            cursor += SSTABLE_BLOCK_VALUE_LEN_STRUCT.size
 
-            # Read Value
+            # Read value
             value = self.data[cursor : cursor + val_len]
             cursor += val_len
 
@@ -112,35 +115,27 @@ class BlockReader:
 
     def get(self, key: bytes, seq_num: int) -> tuple[bytes | None, int | None, bool]:
         """
-        Scans the block for the latest version of `key` where seq_num <= query seq_num.
+        Scans the block for the latest version of `key` where seq_num <= target seq_num.
 
         Returns:
-            (val, False) -> Key found
-            (None, True) -> Key found but it is a tombstone
-            (None, False) -> Key not found in this block
+            (val, seq_num, False) -> Key found
+            (b"", seq_num, True) -> Key found but it is a tombstone
+            (None, None, False) -> Key not found in this block
         """
         for internal_key, value in self:
-            # Split internal key into user_key and metadata (8 bytes: 7 for seq, 1 for type)
-            table_key = internal_key[: -KEY_METADATA_STRUCT.size]
+            # Extract table_key
+            table_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
 
-            # Optimization: since keys are sorted, if we encounter a user_key
-            # strictly greater than what we want, it doesn't exist in this block.
+            # Optimization: keys are sorted, if  table_key > target key, it is not in this block.
             if table_key > key:
                 return None, None, False
 
             if table_key == key:
-                # Unpack metadata to get sequence number and type
-                metadata_bytes = internal_key[-KEY_METADATA_STRUCT.size :]
-                key_metadata = KEY_METADATA_STRUCT.unpack(metadata_bytes)[0]
+                _, table_seq_num, value_type = extract_from_internal_key(internal_key)
 
-                inverted_seq = key_metadata >> 8
-                entry_seq_num = MAX_SEQ_NUM - inverted_seq
-                value_type = key_metadata & 0xFF
-
-                # Check snapshot visibility
-                if entry_seq_num <= seq_num:
-                    if value_type == 0x00:  # Tombstone (Delete)
-                        return None, entry_seq_num, True  # Stop searching lower levels!
-                    return value, entry_seq_num, False
+                if table_seq_num <= seq_num:
+                    if value_type == INTERNAL_KEY_VALUE_TYPE_DELETE:
+                        return b"", table_seq_num, True
+                    return value, table_seq_num, False
 
         return None, None, False
