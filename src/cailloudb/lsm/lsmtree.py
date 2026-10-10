@@ -121,12 +121,11 @@ class LSMTree:
         for key, neg_seq, value in merged_stream:
             entry_seq = -neg_seq
 
-            
             if entry_seq > seq_num:
-                continue # Skip newer versions
+                continue  # Skip newer versions
 
             if key == last_processed_key:
-                continue # Skip key duplicates
+                continue  # Skip key duplicates
 
             # Mask internal tombstone to downstream
             if value != TOMBSTONE:

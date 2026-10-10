@@ -38,6 +38,7 @@ __all__ = [
     "test_append_rejects_payload_longer_than_uint16",
 ]
 
+
 @pytest.mark.asyncio
 async def test_recover_empty_wal(tmp_path):
     wal = Wal(tmp_path / "wal")
@@ -79,7 +80,13 @@ async def test_append_writes_length_prefixed_record(tmp_path):
     wal = Wal(path)
     await wal.append(b"ab", 0, b"xyz")
 
-    payload = WAL_SEQ_STRUCT.pack(0) + WAL_LEN_STRUCT.pack(2) + WAL_LEN_STRUCT.pack(3) + b"ab" + b"xyz"
+    payload = (
+        WAL_SEQ_STRUCT.pack(0)
+        + WAL_LEN_STRUCT.pack(2)
+        + WAL_LEN_STRUCT.pack(3)
+        + b"ab"
+        + b"xyz"
+    )
     checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
     assert path.read_bytes() == (
         WAL_CRC_STRUCT.pack(checksum)
@@ -251,11 +258,15 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
 
-    kind = b"\xFF"
+    kind = b"\xff"
     payload = b"\x00" * 24
     record_data = kind + payload
     checksum = zlib.crc32(record_data) & 0xFFFFFFFF
-    frame = WAL_CRC_STRUCT.pack(checksum) + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload)) + record_data
+    frame = (
+        WAL_CRC_STRUCT.pack(checksum)
+        + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+        + record_data
+    )
     path.write_bytes(frame)
 
     with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):

@@ -210,7 +210,9 @@ class Wal:
                 elif kind == WAL_BATCH_KIND_FIRST:
                     pending = bytearray(payload)
                 else:
-                    raise ValueError("Unknown `kind` from WAL file, probably because the file is corrupted.")
+                    raise ValueError(
+                        "Unknown `kind` from WAL file, probably because the file is corrupted."
+                    )
                 continue
             if kind == WAL_BATCH_KIND_MIDDLE or kind == WAL_BATCH_KIND_LAST:
                 pending += payload
@@ -218,7 +220,9 @@ class Wal:
                     yield from self._batch_ops(bytes(pending))
                     pending = None
                 continue
-            raise ValueError("Unknown `kind` from WAL file, probably because the file is corrupted.")
+            raise ValueError(
+                "Unknown `kind` from WAL file, probably because the file is corrupted."
+            )
 
     # TODO: replay these sequences into the store after a crash
     async def recover(self) -> AsyncIterator[tuple[bytes, int, bytes]]:
