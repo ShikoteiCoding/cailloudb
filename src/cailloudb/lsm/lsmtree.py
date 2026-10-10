@@ -1,10 +1,13 @@
 import heapq
+from pathlib import Path
 from typing import Iterator
 
 from constants import TOMBSTONE
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable, SSTableWriter
+from wal import Wal
+from write_batch import WriteBatch
 
 
 class LSMTree:
@@ -15,8 +18,15 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
-    def __init__(self, memtable_size: int = 32 * 1024 * 1024):
+    def __init__(
+        self,
+        memtable_size: int = 32 * 1024 * 1024,
+        wal_path: Path | None = None,
+    ):
         self.memtable_size = memtable_size
+
+        #: Write-ahead log writer
+        self._wal = Wal(wal_path) if wal_path is not None else None
 
         #: Active memtable instance for in-memory O(1) writes
         self.memtable = MemTable(max_bytes_size=memtable_size)
@@ -37,9 +47,8 @@ class LSMTree:
         """
         Put a key-value pair into the currently active memtable.
         """
-
-        # TODO: Write to wal
-
+        if self._wal is not None:
+            self._wal.append(key, seq_num, value)
         self.memtable.insert(key, seq_num, value)
         if self.memtable.is_full():
             self._rotate_memtable()
@@ -48,9 +57,30 @@ class LSMTree:
         """
         Syntactic sugar to put a tombstone marker.
         """
+        if self._wal is not None:
+            self._wal.append(key, seq_num, b"")
         self.memtable.insert(key, seq_num, TOMBSTONE)
         if self.memtable.is_full():
             self._rotate_memtable()
+
+    def write(self, batch: WriteBatch, seq_num: int) -> int:
+        """
+        Apply each operation in the batch, starting at `seq_num`.
+
+        Returns how many operations were applied.
+        """
+        batch.sync_header(seq_num)
+        if self._wal is not None:
+            self._wal.record(batch, seq_num)
+        applied = 0
+        for key, value in batch:
+            if value == TOMBSTONE:
+                self._insert(key, seq_num, TOMBSTONE)
+            else:
+                self._insert(key, seq_num, value)
+            seq_num += 1
+            applied += 1
+        return applied
 
     def get(self, key: bytes, seq_num: int) -> bytes | None:
         """
@@ -121,12 +151,11 @@ class LSMTree:
         for key, neg_seq, value in merged_stream:
             entry_seq = -neg_seq
 
-            
             if entry_seq > seq_num:
-                continue # Skip newer versions
+                continue  # Skip newer versions
 
             if key == last_processed_key:
-                continue # Skip key duplicates
+                continue  # Skip key duplicates
 
             # Mask internal tombstone to downstream
             if value != TOMBSTONE:

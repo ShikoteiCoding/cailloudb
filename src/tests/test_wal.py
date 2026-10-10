@@ -28,7 +28,7 @@ __all__ = [
     "test_store_put_and_delete_append_to_wal",
     "test_store_write_appends_one_batch_record",
     "test_recover_batch_assigns_one_sequence_per_operation",
-    "test_append_batch_of_hundreds_of_records",
+    "test_append_large_batch_fragments_across_blocks",
     "test_recover_replays_into_empty_store",
     "test_recover_returns_records_before_a_short_tail",
     "test_recover_returns_records_before_a_partial_header",
@@ -37,6 +37,7 @@ __all__ = [
     "test_checksum_mismatch_on_the_last_record_stops",
     "test_append_rejects_payload_longer_than_uint16",
 ]
+
 
 @pytest.mark.asyncio
 async def test_recover_empty_wal(tmp_path):
@@ -79,7 +80,13 @@ async def test_append_writes_length_prefixed_record(tmp_path):
     wal = Wal(path)
     await wal.append(b"ab", 0, b"xyz")
 
-    payload = WAL_SEQ_STRUCT.pack(0) + WAL_LEN_STRUCT.pack(2) + WAL_LEN_STRUCT.pack(3) + b"ab" + b"xyz"
+    payload = (
+        WAL_SEQ_STRUCT.pack(0)
+        + WAL_LEN_STRUCT.pack(2)
+        + WAL_LEN_STRUCT.pack(3)
+        + b"ab"
+        + b"xyz"
+    )
     checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
     assert path.read_bytes() == (
         WAL_CRC_STRUCT.pack(checksum)
@@ -136,7 +143,7 @@ async def test_store_put_and_delete_append_to_wal(tmp_path):
     await store.put(b"b", b"2")
     await store.delete(b"a")
 
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -154,12 +161,12 @@ async def test_store_write_appends_one_batch_record(tmp_path):
 
     await store.write(batch)
 
-    data = store._wal._path.read_bytes()
+    data = store._InMemoryStore__tree._wal._path.read_bytes()
     (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, 4)
     assert len(data) == 7 + payload_len
     assert data[6] == WAL_BATCH_KIND_FULL
 
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -251,11 +258,15 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
 
-    kind = b"\xFF"
+    kind = b"\xff"
     payload = b"\x00" * 24
     record_data = kind + payload
     checksum = zlib.crc32(record_data) & 0xFFFFFFFF
-    frame = WAL_CRC_STRUCT.pack(checksum) + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload)) + record_data
+    frame = (
+        WAL_CRC_STRUCT.pack(checksum)
+        + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+        + record_data
+    )
     path.write_bytes(frame)
 
     with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):
