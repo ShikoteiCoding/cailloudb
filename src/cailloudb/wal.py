@@ -1,8 +1,20 @@
-import struct
 import zlib
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
+from constants import (
+    WAL_BATCH_KIND_FIRST,
+    WAL_BATCH_KIND_FULL,
+    WAL_BATCH_KIND_LAST,
+    WAL_BATCH_KIND_MIDDLE,
+    WAL_BLOCK_SIZE,
+    WAL_CRC_STRUCT,
+    WAL_HEADER_SIZE,
+    WAL_LEN_STRUCT,
+    WAL_PAYLOAD_LEN_STRUCT,
+    WAL_SEQ_STRUCT,
+    WAL_SINGLE_KIND,
+)
 from write_batch import TOMBSTONE, WriteBatch
 
 
@@ -30,20 +42,6 @@ class Wal:
     # TODO: replace 4-byte key/value lengths with a cheaper encoding
     # TODO: extend this header (for example a log number), same append/recover/clear
 
-    _BLOCK_SIZE = 32 * 1024
-    _CRC = struct.Struct(">I")  # 4-byte
-    _PLEN = struct.Struct(">H")  # 2-byte
-    _SEQ = struct.Struct(">Q")  # 8-byte
-    _LEN = struct.Struct(">I")  # 4-byte
-    _HEADER = 7
-
-    #: Record type lives in the physical header, not in the payload.
-    _SINGLE_KIND = 0
-    _BATCH_KIND_FULL = 1
-    _BATCH_KIND_FIRST = 2
-    _BATCH_KIND_MIDDLE = 3
-    _BATCH_KIND_LAST = 4
-
     #: Log file path
     _path: Path
 
@@ -57,8 +55,8 @@ class Wal:
     def _build_physical_record(self, kind: int, payload: bytes) -> bytes:
         checksum = zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF
         return (
-            self._CRC.pack(checksum)
-            + self._PLEN.pack(len(payload))
+            WAL_CRC_STRUCT.pack(checksum)
+            + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
             + bytes([kind])
             + payload
         )
@@ -67,42 +65,42 @@ class Wal:
         """Zero the rest of the block when a header plus one payload byte will not fit"""
         if block_off == 0:
             return 0
-        leftover = self._BLOCK_SIZE - block_off
-        if leftover <= self._HEADER:
+        leftover = WAL_BLOCK_SIZE - block_off
+        if leftover <= WAL_HEADER_SIZE:
             f.write(b"\x00" * leftover)
             return 0
         return block_off
 
     def _append_single(self, f, body: bytes) -> None:
-        block_off = self._padding_short_tail(f, f.tell() % self._BLOCK_SIZE)
-        leftover = self._BLOCK_SIZE - block_off
-        if len(body) > leftover - self._HEADER and block_off:
+        block_off = self._padding_short_tail(f, f.tell() % WAL_BLOCK_SIZE)
+        leftover = WAL_BLOCK_SIZE - block_off
+        if len(body) > leftover - WAL_HEADER_SIZE and block_off:
             f.write(b"\x00" * leftover)
-        f.write(self._build_physical_record(self._SINGLE_KIND, body))
+        f.write(self._build_physical_record(WAL_SINGLE_KIND, body))
 
     def _append_batch(self, f, body: bytes) -> None:
-        block_off = f.tell() % self._BLOCK_SIZE
+        block_off = f.tell() % WAL_BLOCK_SIZE
         pos = 0
         n = len(body)
         started = False
         while pos < n:
             block_off = self._padding_short_tail(f, block_off)
-            available = self._BLOCK_SIZE - block_off - self._HEADER
+            available = WAL_BLOCK_SIZE - block_off - WAL_HEADER_SIZE
             take = min(n - pos, available)
             finishes = pos + take == n
             if not started and finishes:
-                kind = self._BATCH_KIND_FULL
+                kind = WAL_BATCH_KIND_FULL
             elif not started:
-                kind = self._BATCH_KIND_FIRST
+                kind = WAL_BATCH_KIND_FIRST
             elif finishes:
-                kind = self._BATCH_KIND_LAST
+                kind = WAL_BATCH_KIND_LAST
             else:
-                kind = self._BATCH_KIND_MIDDLE
+                kind = WAL_BATCH_KIND_MIDDLE
             f.write(self._build_physical_record(kind, body[pos : pos + take]))
             pos += take
             started = True
-            block_off += self._HEADER + take
-            if block_off == self._BLOCK_SIZE:
+            block_off += WAL_HEADER_SIZE + take
+            if block_off == WAL_BLOCK_SIZE:
                 block_off = 0
 
     async def append(
@@ -118,13 +116,13 @@ class Wal:
             if value is None:
                 value = b""
             body = (
-                self._SEQ.pack(seq_num)
-                + self._LEN.pack(len(key))
-                + self._LEN.pack(len(value))
+                WAL_SEQ_STRUCT.pack(seq_num)
+                + WAL_LEN_STRUCT.pack(len(key))
+                + WAL_LEN_STRUCT.pack(len(value))
                 + key
                 + value
             )
-            if self._HEADER + len(body) > self._BLOCK_SIZE:
+            if WAL_HEADER_SIZE + len(body) > WAL_BLOCK_SIZE:
                 raise ValueError("wal single record exceeds block")
             is_batch = False
 
@@ -140,30 +138,30 @@ class Wal:
         offset = 0
         n = len(data)
         while offset < n:
-            leftover = self._BLOCK_SIZE - (offset % self._BLOCK_SIZE)
+            leftover = WAL_BLOCK_SIZE - (offset % WAL_BLOCK_SIZE)
             # A short tail stops after the last good record, only one record is missed, acceptable
-            if leftover < self._HEADER:
+            if leftover < WAL_HEADER_SIZE:
                 if offset + leftover < n:
                     offset += leftover
                     continue
                 return
-            if n - offset < self._HEADER:
+            if n - offset < WAL_HEADER_SIZE:
                 return
-            if data[offset : offset + self._HEADER] == b"\x00" * self._HEADER:
+            if data[offset : offset + WAL_HEADER_SIZE] == b"\x00" * WAL_HEADER_SIZE:
                 offset += leftover
                 continue
 
-            (checksum,) = self._CRC.unpack_from(data, offset)
-            (payload_len,) = self._PLEN.unpack_from(data, offset + 4)
-            frame_end = offset + self._HEADER + payload_len
+            (checksum,) = WAL_CRC_STRUCT.unpack_from(data, offset)
+            (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, offset + 4)
+            frame_end = offset + WAL_HEADER_SIZE + payload_len
             # Part of this frame is past the end of the file, so this record is missed
             if frame_end > n:
                 return
-            if self._HEADER + payload_len > leftover:
+            if WAL_HEADER_SIZE + payload_len > leftover:
                 raise ValueError("wal checksum mismatch")
 
             kind = data[offset + 6]
-            payload = data[offset + self._HEADER : frame_end]
+            payload = data[offset + WAL_HEADER_SIZE : frame_end]
             offset = frame_end
             # A checksum miss with bytes after it is corruption
             if (zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF) != checksum:
@@ -175,11 +173,11 @@ class Wal:
 
     # TODO : add TOMBSTONE here later
     def _single_ops(self, body: bytes) -> Iterator[tuple[bytes, int, bytes]]:
-        (seq_num,) = self._SEQ.unpack_from(body, 0)
+        (seq_num,) = WAL_SEQ_STRUCT.unpack_from(body, 0)
         inner = 8
-        (key_len,) = self._LEN.unpack_from(body, inner)
+        (key_len,) = WAL_LEN_STRUCT.unpack_from(body, inner)
         inner += 4
-        (val_len,) = self._LEN.unpack_from(body, inner)
+        (val_len,) = WAL_LEN_STRUCT.unpack_from(body, inner)
         inner += 4
         key = bytes(body[inner : inner + key_len])
         inner += key_len
@@ -205,18 +203,18 @@ class Wal:
         pending: bytearray | None = None
         for kind, payload in self._physical_records(self._path.read_bytes()):
             if pending is None:
-                if kind == self._SINGLE_KIND:
+                if kind == WAL_SINGLE_KIND:
                     yield from self._single_ops(payload)
-                elif kind == self._BATCH_KIND_FULL:
+                elif kind == WAL_BATCH_KIND_FULL:
                     yield from self._batch_ops(payload)
-                elif kind == self._BATCH_KIND_FIRST:
+                elif kind == WAL_BATCH_KIND_FIRST:
                     pending = bytearray(payload)
                 else:
                     raise ValueError("Unknown `kind` from WAL file, probably because the file is corrupted.")
                 continue
-            if kind == self._BATCH_KIND_MIDDLE or kind == self._BATCH_KIND_LAST:
+            if kind == WAL_BATCH_KIND_MIDDLE or kind == WAL_BATCH_KIND_LAST:
                 pending += payload
-                if kind == self._BATCH_KIND_LAST:
+                if kind == WAL_BATCH_KIND_LAST:
                     yield from self._batch_ops(bytes(pending))
                     pending = None
                 continue

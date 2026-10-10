@@ -1,9 +1,20 @@
-import struct
 import zlib
 
 import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
+from cailloudb.constants import (
+    WAL_BATCH_KIND_FIRST,
+    WAL_BATCH_KIND_FULL,
+    WAL_BATCH_KIND_LAST,
+    WAL_BATCH_KIND_MIDDLE,
+    WAL_BLOCK_SIZE,
+    WAL_CRC_STRUCT,
+    WAL_LEN_STRUCT,
+    WAL_PAYLOAD_LEN_STRUCT,
+    WAL_SEQ_STRUCT,
+    WAL_SINGLE_KIND,
+)
 
 __all__ = [
     "test_recover_empty_wal",
@@ -26,12 +37,6 @@ __all__ = [
     "test_checksum_mismatch_on_the_last_record_stops",
     "test_append_rejects_payload_longer_than_uint16",
 ]
-
-_CRC = struct.Struct(">I")
-_PLEN = struct.Struct(">H")
-_SEQ = struct.Struct(">Q")
-_LEN = struct.Struct(">I")
-
 
 @pytest.mark.asyncio
 async def test_recover_empty_wal(tmp_path):
@@ -74,12 +79,12 @@ async def test_append_writes_length_prefixed_record(tmp_path):
     wal = Wal(path)
     await wal.append(b"ab", 0, b"xyz")
 
-    payload = _SEQ.pack(0) + _LEN.pack(2) + _LEN.pack(3) + b"ab" + b"xyz"
-    checksum = zlib.crc32(bytes([Wal._SINGLE_KIND]) + payload) & 0xFFFFFFFF
+    payload = WAL_SEQ_STRUCT.pack(0) + WAL_LEN_STRUCT.pack(2) + WAL_LEN_STRUCT.pack(3) + b"ab" + b"xyz"
+    checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
     assert path.read_bytes() == (
-        _CRC.pack(checksum)
-        + _PLEN.pack(len(payload))
-        + bytes([Wal._SINGLE_KIND])
+        WAL_CRC_STRUCT.pack(checksum)
+        + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+        + bytes([WAL_SINGLE_KIND])
         + payload
     )
 
@@ -150,9 +155,9 @@ async def test_store_write_appends_one_batch_record(tmp_path):
     await store.write(batch)
 
     data = store._wal._path.read_bytes()
-    (payload_len,) = _PLEN.unpack_from(data, 4)
+    (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, 4)
     assert len(data) == 7 + payload_len
-    assert data[6] == Wal._BATCH_KIND_FULL
+    assert data[6] == WAL_BATCH_KIND_FULL
 
     records = [record async for record in store._wal.recover()]
     assert records == [
@@ -189,10 +194,10 @@ async def test_append_large_batch_fragments_across_blocks(tmp_path):
     await wal.append(batch, 0)
 
     data = wal._path.read_bytes()
-    block = Wal._BLOCK_SIZE
-    assert data[6] == Wal._BATCH_KIND_FIRST
-    assert data[block + 6] == Wal._BATCH_KIND_MIDDLE
-    assert data[block * 2 + 6] == Wal._BATCH_KIND_LAST
+    block = WAL_BLOCK_SIZE
+    assert data[6] == WAL_BATCH_KIND_FIRST
+    assert data[block + 6] == WAL_BATCH_KIND_MIDDLE
+    assert data[block * 2 + 6] == WAL_BATCH_KIND_LAST
 
     records = [record async for record in wal.recover()]
     assert records == [(i.to_bytes(4, "big"), i + 1, b"v") for i in range(count)]
@@ -250,7 +255,7 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
     payload = b"\x00" * 24
     record_data = kind + payload
     checksum = zlib.crc32(record_data) & 0xFFFFFFFF
-    frame = _CRC.pack(checksum) + _PLEN.pack(len(payload)) + record_data
+    frame = WAL_CRC_STRUCT.pack(checksum) + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload)) + record_data
     path.write_bytes(frame)
 
     with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):
