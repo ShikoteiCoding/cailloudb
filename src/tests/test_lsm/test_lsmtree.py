@@ -29,17 +29,17 @@ def test_lsmtree_internals_iteratively_0_record_memtable():
 
     lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree.memtable) == 0
-    assert len(lsmtree.sstables) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 1
 
     lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
-    assert len(lsmtree.sstables) == 2
-    assert len(lsmtree.sstables[0].index_keys) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 2
+    assert len(list(lsmtree.sstables_map.values())[0].index_keys) == 1
 
     lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 0
-    assert len(lsmtree.sstables) == 3
-    assert len(lsmtree.sstables[0].index_keys) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 3
+    assert len(list(lsmtree.sstables_map.values())[0].index_keys) == 1
 
 
 def test_lsmtree_internals_iteratively_1_records_memtables():
@@ -47,17 +47,17 @@ def test_lsmtree_internals_iteratively_1_records_memtables():
 
     lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree.memtable) == 1
-    assert len(lsmtree.sstables) == 0
+    assert len(list(lsmtree.sstables_map.values())) == 0
 
     lsmtree.put(b"key2", 1, b"val2")
     assert len(lsmtree.memtable) == 0
-    assert len(lsmtree.sstables) == 1
-    assert len(lsmtree.sstables[0].index_keys) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 1
+    assert len(list(lsmtree.sstables_map.values())[0].index_keys) == 1
 
     lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree.memtable) == 1
-    assert len(lsmtree.sstables) == 1
-    assert len(lsmtree.sstables[0].index_keys) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 1
+    assert len(list(lsmtree.sstables_map.values())[0].index_keys) == 1
 
 
 def test_lsmtree_get_from_skiplist():
@@ -80,20 +80,20 @@ def test_lsmtree_get_from_sstable_because_of_spill():
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree.memtable.get(b"key1", 2) is None
-    assert lsmtree.sstables[0].get(b"key1", 2) == MemTableEntry(
+    assert list(lsmtree.sstables_map.values())[0].get(b"key1", 2) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
     )
 
     # Should get it from "middle" sstable
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree.memtable.get(b"key2", 2) is None
-    assert lsmtree.sstables[1].get(b"key2", 2) == MemTableEntry(
+    assert list(lsmtree.sstables_map.values())[1].get(b"key2", 2) == MemTableEntry(
         key=b"key2", seq_num=1, value=b"val2"
     )
 
     # Should get it from "recent" sstable
     assert lsmtree.get(b"key3", 2) == b"val3"
-    assert lsmtree.sstables[2].get(b"key3", 2) == MemTableEntry(
+    assert list(lsmtree.sstables_map.values())[2].get(b"key3", 2) == MemTableEntry(
         key=b"key3", seq_num=2, value=b"val3"
     )
 
@@ -109,19 +109,19 @@ def test_lsmtree_get_from_sstable_or_skiplist():
     # SSTable are then flushed
     # and a fresh memtable is created
     assert lsmtree.memtable.bytes_size > 0
-    assert len(lsmtree.sstables) == 1
+    assert len(list(lsmtree.sstables_map.values())) == 1
 
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree.memtable.get(b"key1", 2) is None
-    assert lsmtree.sstables[0].get(b"key1", 2) == MemTableEntry(
+    assert list(lsmtree.sstables_map.values())[0].get(b"key1", 2) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
     )
 
     # Should get it from "recent" sstable
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree.memtable.get(b"key2", 2) is None
-    assert lsmtree.sstables[0].get(b"key2", 2) == MemTableEntry(
+    assert list(lsmtree.sstables_map.values())[0].get(b"key2", 2) == MemTableEntry(
         key=b"key2", seq_num=1, value=b"val2"
     )
 
@@ -235,7 +235,7 @@ def test_lsmtree_scan_max_seq():
 
 
 def test_lsmtree_scan_iterator_agg_break(monkeypatch: pytest.MonkeyPatch):
-    lsm = LSMTree()
+    lsmtree = LSMTree()
 
     # Mock iterator_agg internal function from scan()
     mock_iterator = iter(
@@ -255,21 +255,21 @@ def test_lsmtree_scan_iterator_agg_break(monkeypatch: pytest.MonkeyPatch):
     )
 
     monkeypatch.setattr(
-        lsm.memtable,
+        lsmtree.memtable,
         "scan",
         lambda _start_key, _end_key, _seq_num: mock_iterator,
     )
-    assert len(lsm.sstables) == 0
+    assert len(list(lsmtree.sstables_map.values())) == 0
 
     # end_key=b"key2" means b"key3" will trigger the break condition
-    result = list(lsm.scan(start_key=b"key0", end_key=b"key2", seq_num=5))
+    result = list(lsmtree.scan(start_key=b"key0", end_key=b"key2", seq_num=5))
 
     # Only b"key1" should be yielded
     assert result == [(b"key1", b"val1")]
 
 
 def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
-    lsm = LSMTree()
+    lsmtree = LSMTree()
 
     # Mock iterator_agg internal function from scan()
     mock_iterator = iter(
@@ -283,22 +283,22 @@ def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
         ]
     )
     monkeypatch.setattr(
-        lsm.memtable,
+        lsmtree.memtable,
         "scan",
         lambda _start_key, _end_key, _seq_num: mock_iterator,
     )
-    lsm.sstables = []
+    lsmtree.sstables_map = {}
 
     # seq_num=7 means seq_num=10 is from the future and should be skipped
-    result = list(lsm.scan(start_key=None, end_key=None, seq_num=7))
+    result = list(lsmtree.scan(start_key=None, end_key=None, seq_num=7))
 
     # The future_val should be skipped, yielding only past_val
     assert result == [(b"key1", b"past_val")]
 
 
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
-    lsm = LSMTree()
+    lsmtree = LSMTree()
 
-    lsm._sync_flush()
+    lsmtree._sync_flush()
 
-    assert len(lsm.sstables) == 0
+    assert len(list(lsmtree.sstables_map.values())) == 0

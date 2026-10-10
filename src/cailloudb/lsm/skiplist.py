@@ -196,5 +196,8 @@ class SkipList:
             yield (current.internal_key, current.value)
             current = current.forward[0]
 
+    def __next__(self):
+        pass
+
     def __len__(self) -> int:
         return self._size
