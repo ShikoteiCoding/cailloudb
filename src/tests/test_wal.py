@@ -25,6 +25,7 @@ __all__ = [
     "test_append_preserves_order",
     "test_clear_drops_logged_records",
     "test_append_after_clear",
+    "test_reopen_opens_a_new_file",
     "test_store_put_and_delete_append_to_wal",
     "test_store_write_appends_one_batch_record",
     "test_recover_batch_assigns_one_sequence_per_operation",
@@ -88,7 +89,8 @@ async def test_append_writes_length_prefixed_record(tmp_path):
         + b"xyz"
     )
     checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
-    assert path.read_bytes() == (
+    assert wal._path.name == "wal_000001.log"
+    assert wal._path.read_bytes() == (
         WAL_CRC_STRUCT.pack(checksum)
         + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
         + bytes([WAL_SINGLE_KIND])
@@ -117,10 +119,30 @@ async def test_append_preserves_order(tmp_path):
 async def test_clear_drops_logged_records(tmp_path):
     wal = Wal(tmp_path / "wal")
     await wal.append(b"a", 0, b"1")
+    sealed = wal._path
+    assert sealed.name == "wal_000001.log"
 
     await wal.clear()
 
+    assert wal._path.name == "wal_000002.log"
+    assert sealed.read_bytes()
     records = [record async for record in wal.recover()]
+    assert records == []
+
+
+@pytest.mark.asyncio
+async def test_reopen_opens_a_new_file(tmp_path):
+    folder = tmp_path / "wal"
+    wal = Wal(folder)
+    await wal.append(b"a", 0, b"1")
+    previous = wal._path
+
+    reopened = Wal(folder)
+
+    assert previous.name == "wal_000001.log"
+    assert previous.read_bytes()
+    assert reopened._path.name == "wal_000002.log"
+    records = [record async for record in reopened.recover()]
     assert records == []
 
 
@@ -235,6 +257,7 @@ async def test_recover_returns_records_before_a_short_tail(tmp_path):
     await wal.append(b"a", 1, b"1")
     await wal.append(b"b", 2, b"2")
 
+    path = wal._path
     path.write_bytes(path.read_bytes()[:-8])
 
     records = [record async for record in wal.recover()]
@@ -247,6 +270,7 @@ async def test_recover_returns_records_before_a_partial_header(tmp_path):
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
 
+    path = wal._path
     path.write_bytes(path.read_bytes() + b"\x01\x02\x03")
 
     records = [record async for record in wal.recover()]
@@ -267,7 +291,7 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
         + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
         + record_data
     )
-    path.write_bytes(frame)
+    wal._path.write_bytes(frame)
 
     with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):
         _ = [record async for record in wal.recover()]
@@ -278,13 +302,14 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
-    middle = path.stat().st_size
+    log = wal._path
+    middle = log.stat().st_size
     await wal.append(b"b", 2, b"2")
     await wal.append(b"c", 3, b"3")
 
-    data = bytearray(path.read_bytes())
+    data = bytearray(log.read_bytes())
     data[middle] ^= 0xFF
-    path.write_bytes(data)
+    log.write_bytes(data)
 
     with pytest.raises(ValueError, match="wal checksum mismatch"):
         _ = [record async for record in wal.recover()]
@@ -295,12 +320,13 @@ async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
-    last = path.stat().st_size
+    log = wal._path
+    last = log.stat().st_size
     await wal.append(b"b", 2, b"2")
 
-    data = bytearray(path.read_bytes())
+    data = bytearray(log.read_bytes())
     data[last] ^= 0xFF
-    path.write_bytes(data)
+    log.write_bytes(data)
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 1, b"1")]
