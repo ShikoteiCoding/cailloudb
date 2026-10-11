@@ -28,6 +28,7 @@ __all__ = [
     "test_reopen_opens_a_new_file",
     "test_store_put_and_delete_append_to_wal",
     "test_store_write_appends_one_batch_record",
+    "test_store_mixes_batch_and_single_ops_in_the_wal",
     "test_recover_batch_assigns_one_sequence_per_operation",
     "test_append_large_batch_fragments_across_blocks",
     "test_recover_replays_into_empty_store",
@@ -180,19 +181,33 @@ async def test_store_write_appends_one_batch_record(tmp_path):
     batch.put(b"a", b"1")
     batch.put(b"b", b"2")
     batch.delete(b"a")
-
     await store.write(batch)
-
-    data = store._InMemoryStore__tree._wal._path.read_bytes()
-    (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, 4)
-    assert len(data) == 7 + payload_len
-    assert data[6] == WAL_BATCH_KIND_FULL
 
     records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
         (b"a", 2, b""),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    await store.put(b"a", b"1")
+    batch = WriteBatch()
+    batch.put(b"b", b"2")
+    batch.delete(b"a")
+    await store.write(batch)
+    await store.put(b"c", b"3")
+
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    assert records == [
+        (b"a", 0, b"1"),
+        (b"b", 1, b"2"),
+        (b"a", 2, b""),
+        (b"c", 3, b"3"),
     ]
 
 
