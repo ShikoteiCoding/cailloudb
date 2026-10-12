@@ -22,11 +22,17 @@ class LSMTree:
         self,
         memtable_size: int = 32 * 1024 * 1024,
         wal_path: Path | None = None,
+        wal_ttl: int = 0,
+        wal_size_limit: int = 0,
     ):
         self.memtable_size = memtable_size
 
         #: Write-ahead log writer
-        self._wal = Wal(wal_path) if wal_path is not None else None
+        self._wal = (
+            Wal(wal_path, ttl=wal_ttl, size_limit=wal_size_limit)
+            if wal_path is not None
+            else None
+        )
 
         #: Active memtable instance for in-memory O(1) writes
         self.memtable = MemTable(max_bytes_size=memtable_size)

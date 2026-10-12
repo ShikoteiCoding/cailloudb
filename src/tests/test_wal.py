@@ -1,3 +1,5 @@
+import os
+import time
 import zlib
 
 import pytest
@@ -24,6 +26,9 @@ __all__ = [
     "test_append_writes_length_prefixed_record",
     "test_append_preserves_order",
     "test_clear_drops_logged_records",
+    "test_clear_ttl_drops_expired_archives_only",
+    "test_clear_size_limit_drops_oldest_archives_only",
+    "test_clear_ttl_runs_before_size_limit",
     "test_append_after_clear",
     "test_reopen_opens_a_new_file",
     "test_store_put_and_delete_append_to_wal",
@@ -146,6 +151,70 @@ async def test_reopen_opens_a_new_file(tmp_path):
     records = [record async for record in reopened.recover()]
     assert records == []
 
+
+@pytest.mark.asyncio
+async def test_clear_ttl_drops_expired_archives_only(tmp_path):
+    folder = tmp_path / "wal"
+    wal = Wal(folder, ttl=10)
+    await wal.append(b"a", 1, b"1")
+    expired = wal._path
+    await wal.clear()
+    os.utime(expired, (time.time() - 30, time.time() - 30))
+    await wal.append(b"b", 2, b"2")
+    fresh = wal._path
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert expired.name not in names
+    assert fresh.name in names
+    assert wal._path.name in names
+    assert fresh.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_clear_size_limit_drops_oldest_archives_only(tmp_path):
+    probe = Wal(tmp_path / "probe")
+    await probe.append(b"a", 1, b"1")
+    record_size = probe._path.stat().st_size
+
+    folder = tmp_path / "wal"
+    wal = Wal(folder, size_limit=record_size)
+    await wal.append(b"a", 1, b"1")
+    oldest = wal._path
+    await wal.clear()
+    await wal.append(b"b", 2, b"2")
+    newest = wal._path
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert oldest.name not in names
+    assert newest.name in names
+    assert wal._path.name in names
+    assert wal._path.stat().st_size == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_ttl_runs_before_size_limit(tmp_path):
+    probe = Wal(tmp_path / "probe")
+    await probe.append(b"a", 1, b"1")
+    record_size = probe._path.stat().st_size
+
+    folder = tmp_path / "wal"
+    wal = Wal(folder, ttl=10, size_limit=record_size * 2)
+    await wal.append(b"a", 1, b"1")
+    young = wal._path
+    await wal.clear()
+    await wal.append(b"b", 2, b"2")
+    old = wal._path
+    await wal.clear()
+    os.utime(old, (time.time() - 30, time.time() - 30))
+    await wal.append(b"c", 3, b"3")
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert young.name in names
+    assert old.name not in names
+    assert wal._path.name in names
 
 @pytest.mark.asyncio
 async def test_append_after_clear(tmp_path):

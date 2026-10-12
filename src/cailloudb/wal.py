@@ -1,3 +1,4 @@
+import time
 import zlib
 from pathlib import Path
 from typing import AsyncIterator, Iterator
@@ -48,9 +49,26 @@ class Wal:
     #: Active log file path
     _path: Path
 
-    def __init__(self, path: Path):
+    #: Seconds an archived log is kept, 0 keeps every archive
+    _ttl: int
+
+    #: Max total bytes of archived logs, 0 keeps every archive
+    _size_limit: int
+
+    def __init__(
+        self,
+        path: Path,
+        ttl: int = 0,
+        size_limit: int = 0,
+    ):
+        if ttl < 0:
+            raise ValueError("wal ttl must be >= 0")
+        if size_limit < 0:
+            raise ValueError("wal size_limit must be >= 0")
         # create folder on disk
         path.mkdir(parents=True, exist_ok=True)
+        self._ttl = ttl
+        self._size_limit = size_limit
         self._number = self._existing_number(path) + 1
         self._path = path / f"wal_{self._number:06d}.log"
         # init or crash, a new WAL file is always created
@@ -242,9 +260,50 @@ class Wal:
             yield record
 
     async def clear(self):
-        """ Birth new WAL file, logs stay on disk """
-        # TODO: TTL and Size Limit, for point-in-time recovery
-        # only archive for now
+        """Birth new WAL file, logs stay on disk.
+        
+        Archived logs stay on disk when ttl and size_limit are 0.
+        """
         self._number += 1
-        self._path = self._path.parent / f"wal_{self._number:06d}.log"
-        self._path.touch()
+        new_path = self._path.parent / f"wal_{self._number:06d}.log"
+        new_path.touch()
+        
+        old_active_path = self._path
+        self._path = new_path
+
+        # if archiving is completely turned off, exit early
+        if self._ttl == 0 and self._size_limit == 0:
+            return
+
+        # gather all historical logs (excluding the brand new active one)
+        archives: list[Path] = []
+        for entry in self._path.parent.glob("wal_*.log"):
+            if entry.name == self._path.name:
+                continue
+            digits = entry.stem.removeprefix("wal_")
+            if len(digits) == 6 and digits.isdigit():
+                archives.append(entry)
+                
+        # sort chronologically (oldest files first)
+        archives.sort(key=lambda entry: entry.name)
+        if self._ttl > 0:
+            now = time.time()
+            kept: list[Path] = []
+            for entry in archives:
+                if now - entry.stat().st_mtime >= self._ttl:
+                    entry.unlink()
+                else:
+                    kept.append(entry)
+            archives = kept
+
+        # apply size limit
+        if self._size_limit > 0:
+            total_size = sum(entry.stat().st_size for entry in archives)
+            
+            for entry in archives:
+                if total_size <= self._size_limit:
+                    break
+                file_size = entry.stat().st_size
+                entry.unlink()
+                total_size -= file_size
+
