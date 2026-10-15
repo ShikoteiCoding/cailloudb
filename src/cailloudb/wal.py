@@ -42,15 +42,27 @@ class Wal:
     # TODO: replace 4-byte key/value lengths with a cheaper encoding
     # TODO: extend this header (for example a log number), same append/recover/clear
 
-    #: Log file path
+    #: Active log number
+    _number: int
+
+    #: Active log file path
     _path: Path
 
     def __init__(self, path: Path):
-        self._path = path
         # create folder on disk
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._path.exists():
-            self._path.touch()
+        path.mkdir(parents=True, exist_ok=True)
+        self._number = self._existing_number(path) + 1
+        self._path = path / f"wal_{self._number:06d}.log"
+        # init or crash, a new WAL file is always created
+        self._path.touch()
+
+    def _existing_number(self, path: Path) -> int:
+        highest = 0
+        for entry in path.glob("wal_*.log"):
+            digits = entry.stem.removeprefix("wal_")
+            if len(digits) == 6 and digits.isdigit():
+                highest = max(highest, int(digits))
+        return highest
 
     def _build_physical_record(self, kind: int, payload: bytes) -> bytes:
         checksum = zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF
@@ -230,5 +242,9 @@ class Wal:
             yield record
 
     async def clear(self):
-        # TODO: rotate to wal-(n+1) instead of truncating a single file
-        self._path.write_bytes(b"")
+        """ Birth new WAL file, logs stay on disk """
+        # TODO: TTL and Size Limit, for point-in-time recovery
+        # only archive for now
+        self._number += 1
+        self._path = self._path.parent / f"wal_{self._number:06d}.log"
+        self._path.touch()
