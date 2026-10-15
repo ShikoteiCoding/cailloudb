@@ -22,11 +22,17 @@ class LSMTree:
         self,
         memtable_size: int = 32 * 1024 * 1024,
         wal_path: Path | None = None,
+        wal_ttl: int = 0,
+        wal_size_limit: int = 0,
     ):
         self.memtable_size = memtable_size
 
         #: Write-ahead log writer
-        self._wal = Wal(wal_path) if wal_path is not None else None
+        self._wal = (
+            Wal(wal_path, ttl=wal_ttl, size_limit=wal_size_limit)
+            if wal_path is not None
+            else None
+        )
 
         #: Active memtable instance for in-memory O(1) writes
         self.memtable = MemTable(max_bytes_size=memtable_size)
@@ -49,7 +55,7 @@ class LSMTree:
         """
         if self._wal is not None:
             await self._wal.append(key, seq_num, value)
-        self._insert(key, seq_num, value)
+        await self._insert(key, seq_num, value)
 
     async def delete(self, key: bytes, seq_num: int) -> None:
         """
@@ -57,13 +63,13 @@ class LSMTree:
         """
         if self._wal is not None:
             await self._wal.append(key, seq_num, b"")
-        self._insert(key, seq_num, TOMBSTONE)
+        await self._insert(key, seq_num, TOMBSTONE)
 
-    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+    async def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """Apply one operation to memtable"""
         self.memtable.insert(key, seq_num, value)
         if self.memtable.is_full():
-            self._rotate_memtable()
+            await self._rotate_memtable()
 
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
         """
@@ -76,7 +82,7 @@ class LSMTree:
             await self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
-            self._insert(key, seq_num, value)
+            await self._insert(key, seq_num, value)
             seq_num += 1
             applied += 1
         return applied
@@ -162,12 +168,16 @@ class LSMTree:
 
             last_processed_key = key
 
-    def _rotate_memtable(self) -> None:
+    async def _rotate_memtable(self) -> None:
         """
-        Flush full memtable(s) to SSTable and create a new active memtable.
+        Flush full memtable(s) to SSTable, create a new active memtable and open the next WAL
+
+        The new log is born before flush so later writes cannot land in sealed file
         """
         self.immutable_memtables.append(self.memtable)
         self.memtable = MemTable(max_bytes_size=self.memtable_size)
+        if self._wal is not None:
+            await self._wal.clear()
         self._sync_flush()
 
     def _sync_flush(self) -> None:

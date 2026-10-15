@@ -48,10 +48,17 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    def __init__(self, wal_path: Path = DEFAULT_WAL):
+    def __init__(
+        self,
+        wal_path: Path = DEFAULT_WAL,
+        wal_ttl: int = 0,
+        wal_size_limit: int = 0,
+    ):
         super().__init__()
 
-        self.__tree = LSMTree(wal_path=wal_path)
+        self.__tree = LSMTree(
+            wal_path=wal_path, wal_ttl=wal_ttl, wal_size_limit=wal_size_limit
+        )
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes | None:
