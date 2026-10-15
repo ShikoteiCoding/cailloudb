@@ -216,6 +216,7 @@ async def test_clear_ttl_runs_before_size_limit(tmp_path):
     assert old.name not in names
     assert wal._path.name in names
 
+
 @pytest.mark.asyncio
 async def test_append_after_clear(tmp_path):
     wal = Wal(tmp_path / "wal")

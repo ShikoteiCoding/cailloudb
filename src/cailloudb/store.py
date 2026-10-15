@@ -56,7 +56,9 @@ class InMemoryStore(BaseStore):
     ):
         super().__init__()
 
-        self.__tree = LSMTree(wal_path=wal_path, wal_ttl=wal_ttl, wal_size_limit=wal_size_limit)
+        self.__tree = LSMTree(
+            wal_path=wal_path, wal_ttl=wal_ttl, wal_size_limit=wal_size_limit
+        )
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes | None:

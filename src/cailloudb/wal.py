@@ -261,13 +261,13 @@ class Wal:
 
     async def clear(self):
         """Birth new WAL file, logs stay on disk.
-        
+
         Archived logs stay on disk when ttl and size_limit are 0.
         """
         self._number += 1
         new_path = self._path.parent / f"wal_{self._number:06d}.log"
         new_path.touch()
-        
+
         old_active_path = self._path
         self._path = new_path
 
@@ -283,7 +283,7 @@ class Wal:
             digits = entry.stem.removeprefix("wal_")
             if len(digits) == 6 and digits.isdigit():
                 archives.append(entry)
-                
+
         # sort chronologically (oldest files first)
         archives.sort(key=lambda entry: entry.name)
         if self._ttl > 0:
@@ -299,11 +299,10 @@ class Wal:
         # apply size limit
         if self._size_limit > 0:
             total_size = sum(entry.stat().st_size for entry in archives)
-            
+
             for entry in archives:
                 if total_size <= self._size_limit:
                     break
                 file_size = entry.stat().st_size
                 entry.unlink()
                 total_size -= file_size
-
