@@ -2,12 +2,9 @@ import random
 from typing import Iterator
 
 from constants import (
-    LEN_METADATA,
-    LEN_SEQUENCE_NUM,
-    MAX_SEQ_NUM,
+    INTERNAL_KEY_LEN_METADATA,
+    INTERNAL_KEY_MAX_SEQ_NUM,
     TOMBSTONE,
-    VALUE_TYPE_DELETE,
-    VALUE_TYPE_PUT,
 )
 from custom_types import MemTableEntry
 from lsm.utils import build_internal_key
@@ -16,11 +13,6 @@ from lsm.utils import build_internal_key
 class _SkipNode:
     """
     Immutable storage unit for SkipList values.
-
-    Stores an internal_key that always follows:
-    [User Key][~SeqNum (56 bits)][ValueType (8 bits)]
-
-    ValueType: PUT (0x1) or DELETE (0x0)
     """
 
     __slots__ = ("internal_key", "value", "forward")
@@ -35,7 +27,7 @@ class _SkipNode:
         """
         Extracts the original User Key.
         """
-        return self.internal_key[:-LEN_METADATA]
+        return self.internal_key[:-INTERNAL_KEY_LEN_METADATA]
 
     @property
     def seq_num(self) -> int:
@@ -43,17 +35,10 @@ class _SkipNode:
         Extracts the 56-bit Sequence Number.
         """
         metadata_int = int.from_bytes(
-            self.internal_key[-LEN_METADATA:], byteorder="big"
+            self.internal_key[-INTERNAL_KEY_LEN_METADATA:], byteorder="big"
         )
-        inverted_seq = metadata_int >> 8
-        return MAX_SEQ_NUM - inverted_seq
-
-    @property
-    def value_type(self) -> int:
-        """
-        Extracts the operation type (0x1 for Put, 0x0 for Delete).
-        """
-        return self.internal_key[-1]
+        inverted_seq = metadata_int >> INTERNAL_KEY_LEN_METADATA
+        return INTERNAL_KEY_MAX_SEQ_NUM - inverted_seq
 
 
 class SkipList:
@@ -87,7 +72,7 @@ class SkipList:
         """
         Insert a key/value pair along with its sequence number.
 
-        Encodes the key and sequence number into a composite internal key
+        Encodes the key and sequence number into an internal key
         ordered by key (ascending) and sequence number (descending).
         """
         internal_key = build_internal_key(key, seq_num, (value == TOMBSTONE))
