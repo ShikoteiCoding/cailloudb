@@ -1,4 +1,5 @@
 import heapq
+from pathlib import Path
 from typing import Iterator
 
 from constants import (
@@ -11,6 +12,8 @@ from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, TableBuilder
+from wal import Wal
+from write_batch import WriteBatch
 
 
 class LSMTree:
@@ -45,11 +48,15 @@ class LSMTree:
     #: Next file id for .sst
     next_file_id: int
 
+    #: Write-ahead log writer
+    _wal: Wal | None
+
     def __init__(
         self,
         memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
         sstable_size: int = SSTABLE_MAX_FILE_SIZE,
         max_levels: int = SSTABLE_MAX_LEVELS,
+        wal_path: Path | None = None,
     ):
         self.memtable_size = memtable_size
         self.sstable_size = sstable_size
@@ -61,23 +68,45 @@ class LSMTree:
         self.sstables_map = {}
         self.levels = [[] for _ in range(max_levels)]
         self.next_file_id = 1
+        self._wal = Wal(wal_path) if wal_path is not None else None
 
-    def put(self, key: bytes, seq_num: int, value: bytes) -> None:
+    async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Put a key-value pair into the currently active memtable.
         """
+        if self._wal is not None:
+            await self._wal.append(key, seq_num, value)
+        self._insert(key, seq_num, value)
 
-        # TODO: Write to wal
-
-        self.memtable.insert(key, seq_num, value)
-        self._maybe_rotate_memtable()
-
-    def delete(self, key: bytes, seq_num: int) -> None:
+    async def delete(self, key: bytes, seq_num: int) -> None:
         """
         Syntactic sugar to put a tombstone marker.
         """
-        self.memtable.insert(key, seq_num, TOMBSTONE)
+        if self._wal is not None:
+            await self._wal.append(key, seq_num, b"")
+        self._insert(key, seq_num, TOMBSTONE)
+
+    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+        """Apply one operation to memtable"""
+        self.memtable.insert(key, seq_num, value)
         self._maybe_rotate_memtable()
+
+    async def write(self, batch: WriteBatch, seq_num: int) -> int:
+        """
+        Apply each operation in the batch, starting at `seq_num`.
+
+        Returns how many operations were applied.
+        """
+        batch.sync_header(seq_num)
+        if self._wal is not None:
+            await self._wal.append(batch, seq_num)
+        applied = 0
+        for key, value in batch:
+            self._insert(key, seq_num, value)
+            seq_num += 1
+            applied += 1
+        self._maybe_rotate_memtable()
+        return applied
 
     def get(self, key: bytes, seq_num: int) -> bytes | None:
         """

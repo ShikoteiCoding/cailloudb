@@ -138,7 +138,7 @@ async def test_put_rejects_none_value(tmp_path):
         await store.put(b"a", None)  # type: ignore
 
     assert await store.latest_sequence_number() == 0
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == []
 
 
@@ -150,5 +150,5 @@ async def test_put_rejects_non_bytes_key(tmp_path):
         await store.put("a", b"1")  # type: ignore[arg-type]
 
     assert await store.latest_sequence_number() == 0
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == []

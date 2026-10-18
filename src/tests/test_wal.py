@@ -28,7 +28,7 @@ __all__ = [
     "test_store_put_and_delete_append_to_wal",
     "test_store_write_appends_one_batch_record",
     "test_recover_batch_assigns_one_sequence_per_operation",
-    "test_append_batch_of_hundreds_of_records",
+    "test_append_large_batch_fragments_across_blocks",
     "test_recover_replays_into_empty_store",
     "test_recover_returns_records_before_a_short_tail",
     "test_recover_returns_records_before_a_partial_header",
@@ -143,7 +143,7 @@ async def test_store_put_and_delete_append_to_wal(tmp_path):
     await store.put(b"b", b"2")
     await store.delete(b"a")
 
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -161,12 +161,12 @@ async def test_store_write_appends_one_batch_record(tmp_path):
 
     await store.write(batch)
 
-    data = store._wal._path.read_bytes()
+    data = store._InMemoryStore__tree._wal._path.read_bytes()
     (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, 4)
     assert len(data) == 7 + payload_len
     assert data[6] == WAL_BATCH_KIND_FULL
 
-    records = [record async for record in store._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
