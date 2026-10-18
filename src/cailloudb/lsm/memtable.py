@@ -64,8 +64,6 @@ class MemTable(Iterator):
         Behavior:
             Ordering guarantee as the SkipList property
         """
-        # for entry in self.skiplist:
-        #     yield entry
         return self.skiplist.__iter__()
 
     def __next__(self):
