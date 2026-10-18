@@ -200,6 +200,8 @@ class LSMTree:
         if self.memtable.is_full():
             self.immutable_memtables.append(self.memtable)
             self.memtable = MemTable(max_bytes_size=self.memtable_size)
+
+            # XXX: remove blocking the hotpath with a sync flush
             self._sync_flush()
 
     def _sync_flush(self) -> None:
