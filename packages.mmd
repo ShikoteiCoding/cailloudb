@@ -17,6 +17,10 @@ classDiagram
   }
   class block {
   }
+  class compactor {
+  }
+  class filepicker {
+  }
   class lsmtree {
   }
   class memtable {
@@ -24,6 +28,8 @@ classDiagram
   class skiplist {
   }
   class sstable {
+  }
+  class table_builder {
   }
   class utils {
   }
@@ -47,9 +53,8 @@ classDiagram
   dbbuilder --> db
   store --> constants
   store --> custom_types
-  store --> index
   store --> lsmtree
-  store --> wal
+  wal --> constants
   wal --> write_batch
   write_batch --> constants
   db ..> store
