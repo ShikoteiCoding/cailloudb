@@ -60,6 +60,12 @@ class BlockBuilder:
     def is_empty(self) -> bool:
         return self.buffer.tell() == 0
 
+    def estimated_size(self) -> int:
+        """
+        Returns estimated size of the current active block.
+        """
+        return self.buffer.tell()
+
     def finalize(self) -> tuple[bytes, bytes]:
         """
         Returns the finalized block data and resets the buffer.
@@ -67,6 +73,7 @@ class BlockBuilder:
         block_data = self.buffer.getvalue()
         last_internal_key = self.last_internal_key
 
+        # Reset internals
         self.buffer = io.BytesIO()
         self.last_internal_key = b""
 

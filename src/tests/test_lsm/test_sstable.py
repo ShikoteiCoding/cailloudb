@@ -3,20 +3,22 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.constants import SSTABLE_FOOTER_STRUCT, SSTABLE_MAGIC_NUMBER, TOMBSTONE
+from cailloudb.constants import (
+    SSTABLE_FOOTER_STRUCT,
+    SSTABLE_MAGIC_NUMBER,
+    SSTABLE_MAX_FILE_SIZE,
+    TOMBSTONE,
+)
 from cailloudb.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
     InMemorySSTable,
     SSTable,
 )
-from cailloudb.lsm.table_builder import TableBuilder
+from cailloudb.lsm.table_builder import TableBuilder, write_iterator_to_sstables
 from cailloudb.lsm.utils import extract_from_internal_key
 
 __all__ = [
-    "test_sstable_writer_write_returns",
-    "test_sstable_writer_write_sstable",
-    "test_sstable_writer_to_disk",
     "test_sstable_get",
     "test_sstable_iter",
     "test_sstable_scan_fixed_range",
@@ -27,104 +29,18 @@ __all__ = [
 
 
 @pytest.fixture
-def sstable_writer() -> TableBuilder:
-    return TableBuilder(in_memory=True, dir=Path("/tmp/data"))
-
-
-@pytest.fixture
 def memtable() -> MemTable:
     return MemTable()
 
 
-@pytest.mark.parametrize(
-    "in_memory,expected_cls",
-    [
-        (True, InMemorySSTable),
-        (False, SSTable),
-    ],
-)
-def test_sstable_writer_write_returns(in_memory: bool, expected_cls: type[SSTable]):
-    memtable = MemTable()
-    memtable.insert(key=b"carrot", seq_num=1, value=b"orange")
-    memtable.insert(key=b"banana", seq_num=2, value=TOMBSTONE)
-    memtable.insert(key=b"apple", seq_num=3, value=b"red")
-
-    sstable_writer = TableBuilder(in_memory=in_memory, dir=Path("/tmp/data"))
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
-
-    assert sstable.path == Path("000001.sst")
-    assert sstable.file.tell() == 0
-    assert sstable.file_id == 1
-
-
-def test_sstable_writer_write_sstable(sstable_writer: TableBuilder, memtable: MemTable):
-    memtable.insert(key=b"key1", seq_num=0, value=b"val1")
-    memtable.insert(key=b"key2", seq_num=1, value=b"val2")
-    memtable.insert(key=b"key3", seq_num=2, value=TOMBSTONE)
-
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
-
-    # Check sparse index
-    assert len(sstable.index_keys) == 1  # 1 block ~4KB holds the 2 records
-
-    # Check files
-    assert sstable.file.tell() == 0
-    assert len(sstable.file.getvalue()) > 0
-
-    # Check data
-    ssentries = [ssentry for ssentry in sstable]
-    assert len(ssentries) == 3
-    assert sstable.get(b"key1", 3) == SSTableEntry(
-        key=b"key1", seq_num=0, value=b"val1"
-    )
-    assert sstable.get(b"key2", 3) == SSTableEntry(
-        key=b"key2", seq_num=1, value=b"val2"
-    )
-    assert sstable.get(b"key3", 3) == SSTableEntry(
-        key=b"key3", seq_num=2, value=TOMBSTONE
-    )
-    assert sstable.get(b"key4", 3) == None
-
-
-def test_sstable_writer_writes_mutliple_sstables(memtable: MemTable):
-    sstable_writer = TableBuilder(
-        in_memory=False, dir=Path("/tmp/data"), block_size=10, max_file_size=20
-    )
-
-    memtable.insert(key=b"key1", seq_num=0, value=b"val1")
-    memtable.insert(key=b"key2", seq_num=1, value=b"val2")
-    memtable.insert(key=b"key3", seq_num=2, value=TOMBSTONE)
-
-    sstables = sstable_writer.write(memtable, 1)
-    assert len(sstables) == 3
-
-    # TODO: should be moved to settings
-    with pytest.raises(Exception):
-        sstable_writer = TableBuilder(
-            in_memory=False, dir=Path("/tmp/data"), block_size=20, max_file_size=20
-        )
-
-
-@pytest.mark.skip("Disk SSTable not implemented")
-def test_sstable_writer_to_disk(memtable: MemTable):
-    sstable_writer = TableBuilder(in_memory=False, dir=Path("/tmp/data"))
-    memtable.insert(key=b"key1", seq_num=1, value=b"val1")
-
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
-
-    assert isinstance(sstable, SSTable)
-    assert not isinstance(sstable, InMemorySSTable)
-    assert len(sstable.index_keys) == 1
-    assert sstable.file.tell() == 0
-    assert len(sstable.file.getvalue()) > 0
-
-
-def test_sstable_get(sstable_writer: TableBuilder, memtable: MemTable):
+def test_sstable_get(memtable: MemTable):
     memtable.insert(key=b"apple", seq_num=1, value=b"red")
     memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     assert sstable.get(b"apple", 3) == SSTableEntry(
         key=b"apple", seq_num=1, value=b"red"
@@ -139,13 +55,15 @@ def test_sstable_get(sstable_writer: TableBuilder, memtable: MemTable):
     )
 
 
-def test_sstable_iter(sstable_writer: TableBuilder, memtable: MemTable):
+def test_sstable_iter(memtable: MemTable):
     memtable.insert(key=b"apple", seq_num=1, value=b"red")
     memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
     memtable.insert(key=b"lime", seq_num=4, value=b"green")
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     ssentries = [ssentry for ssentry in sstable]
     assert extract_from_internal_key(ssentries[0][0]) == (b"apple", 1, 1)
@@ -154,12 +72,14 @@ def test_sstable_iter(sstable_writer: TableBuilder, memtable: MemTable):
     assert extract_from_internal_key(ssentries[3][0]) == (b"lime", 4, 1)
 
 
-def test_sstable_scan_fixed_range(sstable_writer: TableBuilder, memtable: MemTable):
+def test_sstable_scan_fixed_range(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     # Test inclusive
     result = [item for item in sstable.scan(b"key", b"key4", 2)]
@@ -198,12 +118,14 @@ def test_sstable_scan_fixed_range(sstable_writer: TableBuilder, memtable: MemTab
     assert result == []
 
 
-def test_sstable_scan_unbounded_range(sstable_writer: TableBuilder, memtable: MemTable):
+def test_sstable_scan_unbounded_range(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     # Test unbounded end_key
     result = [item for item in sstable.scan(b"key1", None, 2)]
@@ -230,12 +152,14 @@ def test_sstable_scan_unbounded_range(sstable_writer: TableBuilder, memtable: Me
     ]
 
 
-def test_sstable_scan_max_seq(sstable_writer: TableBuilder, memtable: MemTable):
+def test_sstable_scan_max_seq(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     # Test fixed range
     result = [item for item in sstable.scan(b"key1", b"key4", 1)]
@@ -252,13 +176,13 @@ def test_sstable_scan_max_seq(sstable_writer: TableBuilder, memtable: MemTable):
     ]
 
 
-def test_sstable_scan_all_occurence_of_a_key(
-    sstable_writer: TableBuilder, memtable: MemTable
-):
+def test_sstable_scan_all_occurence_of_a_key(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key1", 1, TOMBSTONE)
 
-    sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
 
     result = [item for item in sstable.scan(None, None, 1)]
 
@@ -269,12 +193,12 @@ def test_sstable_scan_all_occurence_of_a_key(
     ]
 
 
-def test_sstable_SSTABLE_MAGIC_NUMBER_fence(
-    sstable_writer: TableBuilder, memtable: MemTable
-):
+def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
 
-    valid_sstable, file_metadata = sstable_writer.write(memtable, 1)[0]
+    valid_sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
     valid_bytes = valid_sstable.file.getvalue()
 
     index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(

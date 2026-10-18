@@ -8,151 +8,144 @@ from constants import (
     SSTABLE_FOOTER_STRUCT,
     SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
     SSTABLE_MAGIC_NUMBER,
-    SSTABLE_MAX_FILE_SIZE,
 )
+from custom_types import FileMetaData
 from lsm.block import BlockBuilder
 from lsm.sstable import InMemorySSTable, SSTable
 
 
-class FileMetaData:
+def write_iterator_to_sstables(
+    iterator: Iterator[tuple[bytes, bytes]],
+    start_file_id: int,
+    max_file_size: int,
+    in_memory: bool = True,
+) -> list[tuple[SSTable, FileMetaData]]:
     """
-    Represents an SSTable file on disk.
+    Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
     """
+    results = []
+    current_file_id = start_file_id
+    builder = None
 
-    def __init__(self, smallest_key, largest_key, file_size):
-        self.smallest_key = smallest_key
-        self.largest_key = largest_key
-        self.file_size = file_size
+    for internal_key, value in iterator:
+        if builder is None:
+            builder = TableBuilder(file_id=current_file_id, in_memory=in_memory)
+
+        builder.add(internal_key, value)
+
+        # Split if full
+        if builder.estimated_size() >= max_file_size:
+            results.append(builder.finish())
+            current_file_id += 1
+            builder = None
+
+    # Flush the remaining
+    if builder is not None:
+        results.append(builder.finish())
+
+    return results
 
 
 class TableBuilder:
+    """
+    Builds a single SSTable.
+    Usage:
+        builder = TableBuilder(...)
+        for k, v in data:
+            builder.add(k, v)
+        sstable, meta = builder.finish()
+    """
+
     def __init__(
         self,
+        file_id: int,
         in_memory: bool = True,
         dir: Path | None = None,
         block_size: int = SSTABLE_BLOCK_DEFAULT_SIZE,
-        max_file_size: int = SSTABLE_MAX_FILE_SIZE,
     ):
+        self.file_id = file_id
         self.in_memory = in_memory
         self.dir = dir
         self.block_size = block_size
-        self.max_file_size = max_file_size
 
-        # TODO: Move to settings once available
-        assert max_file_size > block_size, "File size must be greater than block size"
+        self.out = io.BytesIO()
+        self.block_builder = BlockBuilder(self.block_size)
+        self.index_entries = []
+        self.current_offset = 0
 
-    def write(
-        self, iterator: Iterator[tuple[bytes, bytes]], file_id: int
-    ) -> list[tuple[SSTable, FileMetaData]]:
+        self.smallest_key: bytes = b""
+        self.largest_key: bytes = b""
+
+    def add(self, internal_key: bytes, value: bytes) -> None:
         """
-        Write ant iterator of (bytes, bytes) tuples as one or more SSTables.
-        Splits files when they exceed max_file_size.
-
-        SSTable binary file layout:
-            +------------------------------------------------------------------------+
-            | Data Block 0 (~4KB of length-prefixed MemTableEntries)                 |
-            +------------------------------------------------------------------------+
-            | Data Block 1 (~4KB of length-prefixed MemTableEntries)                 |
-            +------------------------------------------------------------------------+
-            | ...                                                                    |
-            +------------------------------------------------------------------------+
-            | Data Block N (Final partial data block)                                |
-            +------------------------------------------------------------------------+
-            | Index Block: Array of [4B KeyLen][LastKey][8B BlockOffset][8B BlockLen]|
-            +------------------------------------------------------------------------+
-            | Footer (20 Bytes Fixed): [8B IndexOffset][8B IndexSize][4B Magic]      |
-            +------------------------------------------------------------------------+
+        Add an entry to the file.
         """
-        generated_sstables = []
-        out = io.BytesIO()
-        block_builder = BlockBuilder(self.block_size)
+        # Assumptions:
+        #   - Adds are always called on a sorted container
+        if self.block_builder.is_full():
+            self._flush_block()
 
-        index_entries: list[tuple[bytes, int, int]] = []
-        current_offset = 0
+        if self.smallest_key == b"":
+            self.smallest_key = internal_key
+        # The latest added key is always the largest
+        self.largest_key = internal_key
 
-        smallest_key: bytes | None = None
-        largest_key: bytes | None = None
+        self.block_builder.add(internal_key, value)
 
-        def finalize_current_sstable():
-            """
-            Helper to write the index/footer, save the file, and reset state.
-            """
-            nonlocal out, index_entries, current_offset, file_id
-            nonlocal smallest_key, largest_key
+    def _flush_block(self):
+        block_data, last_internal_key = self.block_builder.finalize()
+        self.out.write(block_data)
+        block_len = len(block_data)
+        self.index_entries.append((last_internal_key, self.current_offset, block_len))
+        self.current_offset += block_len
 
-            # Write index block
-            index_offset = out.tell()
-            for last_key, block_offset, block_len in index_entries:
-                out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
-                out.write(last_key)
-                out.write(
-                    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(
-                        block_offset, block_len
-                    )
-                )
-            index_size = out.tell() - index_offset
+    def estimated_size(self) -> int:
+        """
+        Used by the caller to decide when to split files.
+        """
+        return self.current_offset + self.block_builder.estimated_size()
 
-            # Write footer
-            footer_bytes = SSTABLE_FOOTER_STRUCT.pack(
-                index_offset, index_size, SSTABLE_MAGIC_NUMBER
+    def finish(self) -> tuple[SSTable, FileMetaData]:
+        """
+        Used by the caller to decide when to close the current file.
+        """
+        if not self.block_builder.is_empty():
+            self._flush_block()
+
+        # Write index block
+        index_offset = self.out.tell()
+        for last_key, block_offset, block_len in self.index_entries:
+            self.out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
+            self.out.write(last_key)
+            self.out.write(
+                SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(block_offset, block_len)
             )
-            out.write(footer_bytes)
-            file_size = out.tell()
-            out.seek(0)
+        index_size = self.out.tell() - index_offset
 
-            meta = FileMetaData(
-                smallest_key=smallest_key,
-                largest_key=largest_key,
-                file_size=file_size,
+        # Write footer
+        self.out.write(
+            SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
+        )
+        file_size = self.out.tell()
+        self.out.seek(0)
+
+        meta = FileMetaData(
+            smallest_key=self.smallest_key,
+            largest_key=self.largest_key,
+            file_size=file_size,
+        )
+
+        sstable = (
+            InMemorySSTable(
+                file_id=self.file_id,
+                file=self.out,
+                path=Path(f"{self.file_id:06d}.sst"),
             )
-
-            generated_sstables.append(
-                (
-                    SSTable(file_id=file_id, file=out, path=Path(f"{file_id:06d}.sst"))
-                    if not self.in_memory
-                    else InMemorySSTable(
-                        file_id=file_id, file=out, path=Path(f"{file_id:06d}.sst")
-                    ),
-                    meta,
-                )
+            if self.in_memory
+            else SSTable(
+                file_id=self.file_id,
+                file=self.out,
+                path=Path(f"{self.file_id:06d}.sst"),
             )
-
-            file_id += 1
-            out = io.BytesIO()
-            index_entries = []
-            current_offset = 0
-            smallest_key = None
-            largest_key = None
-
-        for internal_key, value in iterator:
-            if block_builder.is_full():
-                block_data, last_internal_key = block_builder.finalize()
-                out.write(block_data)
-
-                block_len = len(block_data)
-                index_entries.append((last_internal_key, current_offset, block_len))
-                current_offset += block_len
-
-                if current_offset >= self.max_file_size:
-                    finalize_current_sstable()
-
-            if smallest_key is None:
-                smallest_key = internal_key
-            largest_key = internal_key
-
-            block_builder.add(internal_key, value)
-
-        # Close potentially opened last block
-        if not block_builder.is_empty():
-            block_data, last_internal_key = block_builder.finalize()
-            out.write(block_data)
-
-            block_len = len(block_data)
-            index_entries.append((last_internal_key, current_offset, block_len))
-            current_offset += block_len
-
-        # Close file
-        if current_offset > 0:
-            finalize_current_sstable()
-
-        return generated_sstables
+        )
+        return sstable, meta

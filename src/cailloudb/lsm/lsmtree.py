@@ -11,7 +11,7 @@ from constants import (
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
-from lsm.table_builder import FileMetaData, TableBuilder
+from lsm.table_builder import FileMetaData, write_iterator_to_sstables
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -33,9 +33,6 @@ class LSMTree:
 
     #: Immutable memtables waiting to be flushed
     immutable_memtables: list[MemTable]
-
-    #: TableBuilder
-    table_builder: TableBuilder
 
     #: SSTables map from "file_id" to SSTable pointer
     sstables_map: dict[int, SSTable]
@@ -64,7 +61,6 @@ class LSMTree:
 
         self.memtable = MemTable(max_bytes_size=memtable_size)
         self.immutable_memtables = []
-        self.table_builder = TableBuilder(in_memory=True)
         self.sstables_map = {}
         self.levels = [[] for _ in range(max_levels)]
         self.next_file_id = 1
@@ -85,11 +81,6 @@ class LSMTree:
         if self._wal is not None:
             await self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
-
-    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
-        """Apply one operation to memtable"""
-        self.memtable.insert(key, seq_num, value)
-        self._maybe_rotate_memtable()
 
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
         """
@@ -193,6 +184,13 @@ class LSMTree:
 
             last_processed_key = key
 
+    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+        """
+        Apply one operation to the active memtable.
+        """
+        self.memtable.insert(key, seq_num, value)
+        self._maybe_rotate_memtable()
+
     def _maybe_rotate_memtable(self) -> None:
         """
         Flush full memtable(s) to SSTable and create a new active memtable.
@@ -215,11 +213,16 @@ class LSMTree:
 
         while self.immutable_memtables:
             memtable = self.immutable_memtables.pop(0)
-            new_sstables = self.table_builder.write(
-                memtable.__iter__(), self.next_file_id
-            )
-            self.next_file_id += len(new_sstables)
 
-            for sstable, file_metadata in new_sstables:
+            # XXX: Implement a retry and raise on max retry
+            generated_files = write_iterator_to_sstables(
+                iterator=memtable.__iter__(),
+                start_file_id=self.next_file_id,
+                max_file_size=self.sstable_size,
+            )
+
+            for sstable, meta in generated_files:
                 self.sstables_map[sstable.file_id] = sstable
-                self.levels[0].append(file_metadata)
+                self.levels[0].append(meta)
+
+            self.next_file_id += len(generated_files)
