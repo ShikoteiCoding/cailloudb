@@ -130,6 +130,7 @@ class TableBuilder:
         self.out.seek(0)
 
         meta = FileMetaData(
+            file_id=self.file_id,
             smallest_key=self.smallest_key,
             largest_key=self.largest_key,
             file_size=file_size,

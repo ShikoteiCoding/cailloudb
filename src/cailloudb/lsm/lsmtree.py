@@ -12,6 +12,7 @@ from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
+from lsm.utils import build_internal_key, extract_from_internal_key
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -105,6 +106,7 @@ class LSMTree:
 
         LSMTree is responsible for the tombstone logic.
         """
+        # TODO: implement bloom filter
         # Assumptions
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check
@@ -114,24 +116,37 @@ class LSMTree:
 
         # Tombstone conversion happens here
         if entry:
-            if entry["value"] == TOMBSTONE:
-                return None
-            return entry["value"]
+            return None if entry["value"] == TOMBSTONE else entry["value"]
+
+        # TODO: solve concurrency issue when memtables are queued for flushing
+        for imm in reversed(self.immutable_memtables):
+            entry = imm.get(key, seq_num)
+            if entry:
+                return None if entry["value"] == TOMBSTONE else entry["value"]
 
         # Check SSTables in reverse order
-        # TODO: solve concurrency issue when memtables are queued for flushing
-        # TODO: implement bloom filter
+        for level_idx, level_files in enumerate(self.levels):
+            if not level_files:
+                continue
 
-        # XXX: improve get to use SSTableMetadata
-        for sstable in reversed(self.sstables_map.values()):
-            entry = sstable.get(key, seq_num)
-
-            # Tombstone conversion happens here
-            if entry:
-                if entry["value"] == TOMBSTONE:
-                    return None
-                return entry["value"]
-
+            if level_idx == 0:
+                # Level 0 can overlap, all files must be checked
+                for meta in reversed(level_files):
+                    # XXX: CPU costly, could be optimized
+                    if (
+                        extract_from_internal_key(meta["smallest_key"])[0]
+                        <= key
+                        <= extract_from_internal_key(meta["largest_key"])[0]
+                    ):
+                        sstable = self.sstables_map[meta["file_id"]]
+                        entry = sstable.get(key, seq_num)
+                        if entry:
+                            return (
+                                None if entry["value"] == TOMBSTONE else entry["value"]
+                            )
+            else:
+                # XXX: Implement when compaction available
+                return
         return None
 
     def scan(

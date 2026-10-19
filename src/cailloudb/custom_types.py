@@ -34,6 +34,7 @@ class FileMetaData(TypedDict):
     Represents an SSTable file on disk.
     """
 
+    file_id: int
     smallest_key: bytes
     largest_key: bytes
     file_size: int
