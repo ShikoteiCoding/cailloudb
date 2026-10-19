@@ -132,7 +132,7 @@ class LSMTree:
             if level_idx == 0:
                 # Level 0 can overlap, all files must be checked
                 for meta in reversed(level_files):
-                    # XXX: CPU costly, could be optimized
+                    # XXX: cpu-costly, should be optimized
                     if (
                         extract_from_internal_key(meta["smallest_key"])[0]
                         <= key
@@ -147,7 +147,7 @@ class LSMTree:
             else:
                 # XXX: Implement when compaction available
                 return
-        return None
+        return
 
     def scan(
         self, start_key: bytes | None, end_key: bytes | None, seq_num: int
@@ -166,9 +166,29 @@ class LSMTree:
         iterators = []
         iterators.append(self.memtable.scan(start_key, end_key, seq_num))
 
-        # XXX: improve get to use SSTableMetadata
-        for sst in self.sstables_map.values():
-            iterators.append(sst.scan(start_key, end_key, seq_num))
+        # TODO: solve concurrency issue when memtables are queued for flushing
+        for imm in self.immutable_memtables:
+            iterators.append(imm.scan(start_key, end_key, seq_num))
+
+        for level_idx, level_files in enumerate(self.levels):
+            for meta in level_files:
+                # XXX: cpu-costly, should be optimized
+                file_smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
+                file_largest_key = extract_from_internal_key(meta["largest_key"])[0]
+
+                if start_key is not None and file_largest_key < start_key:
+                    continue
+
+                if end_key is not None and file_smallest_key >= end_key:
+                    # Continue on level 0 as key overlap will exist
+                    if level_idx == 0:
+                        continue
+                    # Exit loop as level n+1 are non overlapping and sorted
+                    else:
+                        break
+
+                sst = self.sstables_map[meta["file_id"]]
+                iterators.append(sst.scan(start_key, end_key, seq_num))
 
         # Aggregator function for whichever iterator
         def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
