@@ -1,3 +1,5 @@
+import os
+import time
 import zlib
 
 import pytest
@@ -24,9 +26,14 @@ __all__ = [
     "test_append_writes_length_prefixed_record",
     "test_append_preserves_order",
     "test_clear_drops_logged_records",
+    "test_clear_ttl_drops_expired_archives_only",
+    "test_clear_size_limit_drops_oldest_archives_only",
+    "test_clear_ttl_runs_before_size_limit",
     "test_append_after_clear",
+    "test_reopen_opens_a_new_file",
     "test_store_put_and_delete_append_to_wal",
     "test_store_write_appends_one_batch_record",
+    "test_store_mixes_batch_and_single_ops_in_the_wal",
     "test_recover_batch_assigns_one_sequence_per_operation",
     "test_append_large_batch_fragments_across_blocks",
     "test_recover_replays_into_empty_store",
@@ -88,7 +95,8 @@ async def test_append_writes_length_prefixed_record(tmp_path):
         + b"xyz"
     )
     checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
-    assert path.read_bytes() == (
+    assert wal._path.name == "wal_000001.log"
+    assert wal._path.read_bytes() == (
         WAL_CRC_STRUCT.pack(checksum)
         + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
         + bytes([WAL_SINGLE_KIND])
@@ -117,11 +125,96 @@ async def test_append_preserves_order(tmp_path):
 async def test_clear_drops_logged_records(tmp_path):
     wal = Wal(tmp_path / "wal")
     await wal.append(b"a", 0, b"1")
+    sealed = wal._path
+    assert sealed.name == "wal_000001.log"
 
     await wal.clear()
 
+    assert wal._path.name == "wal_000002.log"
+    assert sealed.read_bytes()
     records = [record async for record in wal.recover()]
     assert records == []
+
+
+@pytest.mark.asyncio
+async def test_reopen_opens_a_new_file(tmp_path):
+    folder = tmp_path / "wal"
+    wal = Wal(folder)
+    await wal.append(b"a", 0, b"1")
+    previous = wal._path
+
+    reopened = Wal(folder)
+
+    assert previous.name == "wal_000001.log"
+    assert previous.read_bytes()
+    assert reopened._path.name == "wal_000002.log"
+    records = [record async for record in reopened.recover()]
+    assert records == []
+
+
+@pytest.mark.asyncio
+async def test_clear_ttl_drops_expired_archives_only(tmp_path):
+    folder = tmp_path / "wal"
+    wal = Wal(folder, ttl=10)
+    await wal.append(b"a", 1, b"1")
+    expired = wal._path
+    await wal.clear()
+    os.utime(expired, (time.time() - 30, time.time() - 30))
+    await wal.append(b"b", 2, b"2")
+    fresh = wal._path
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert expired.name not in names
+    assert fresh.name in names
+    assert wal._path.name in names
+    assert fresh.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_clear_size_limit_drops_oldest_archives_only(tmp_path):
+    probe = Wal(tmp_path / "probe")
+    await probe.append(b"a", 1, b"1")
+    record_size = probe._path.stat().st_size
+
+    folder = tmp_path / "wal"
+    wal = Wal(folder, size_limit=record_size)
+    await wal.append(b"a", 1, b"1")
+    oldest = wal._path
+    await wal.clear()
+    await wal.append(b"b", 2, b"2")
+    newest = wal._path
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert oldest.name not in names
+    assert newest.name in names
+    assert wal._path.name in names
+    assert wal._path.stat().st_size == 0
+
+
+@pytest.mark.asyncio
+async def test_clear_ttl_runs_before_size_limit(tmp_path):
+    probe = Wal(tmp_path / "probe")
+    await probe.append(b"a", 1, b"1")
+    record_size = probe._path.stat().st_size
+
+    folder = tmp_path / "wal"
+    wal = Wal(folder, ttl=10, size_limit=record_size * 2)
+    await wal.append(b"a", 1, b"1")
+    young = wal._path
+    await wal.clear()
+    await wal.append(b"b", 2, b"2")
+    old = wal._path
+    await wal.clear()
+    os.utime(old, (time.time() - 30, time.time() - 30))
+    await wal.append(b"c", 3, b"3")
+    await wal.clear()
+
+    names = {entry.name for entry in folder.glob("wal_*.log")}
+    assert young.name in names
+    assert old.name not in names
+    assert wal._path.name in names
 
 
 @pytest.mark.asyncio
@@ -158,19 +251,33 @@ async def test_store_write_appends_one_batch_record(tmp_path):
     batch.put(b"a", b"1")
     batch.put(b"b", b"2")
     batch.delete(b"a")
-
     await store.write(batch)
-
-    data = store._InMemoryStore__tree._wal._path.read_bytes()
-    (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, 4)
-    assert len(data) == 7 + payload_len
-    assert data[6] == WAL_BATCH_KIND_FULL
 
     records = [record async for record in store._InMemoryStore__tree._wal.recover()]
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
         (b"a", 2, b""),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
+    store = InMemoryStore(tmp_path / "wal")
+
+    await store.put(b"a", b"1")
+    batch = WriteBatch()
+    batch.put(b"b", b"2")
+    batch.delete(b"a")
+    await store.write(batch)
+    await store.put(b"c", b"3")
+
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    assert records == [
+        (b"a", 0, b"1"),
+        (b"b", 1, b"2"),
+        (b"a", 2, b""),
+        (b"c", 3, b"3"),
     ]
 
 
@@ -235,6 +342,7 @@ async def test_recover_returns_records_before_a_short_tail(tmp_path):
     await wal.append(b"a", 1, b"1")
     await wal.append(b"b", 2, b"2")
 
+    path = wal._path
     path.write_bytes(path.read_bytes()[:-8])
 
     records = [record async for record in wal.recover()]
@@ -247,6 +355,7 @@ async def test_recover_returns_records_before_a_partial_header(tmp_path):
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
 
+    path = wal._path
     path.write_bytes(path.read_bytes() + b"\x01\x02\x03")
 
     records = [record async for record in wal.recover()]
@@ -267,7 +376,7 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
         + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
         + record_data
     )
-    path.write_bytes(frame)
+    wal._path.write_bytes(frame)
 
     with pytest.raises(ValueError, match="Unknown `kind` from WAL file"):
         _ = [record async for record in wal.recover()]
@@ -278,13 +387,14 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
-    middle = path.stat().st_size
+    log = wal._path
+    middle = log.stat().st_size
     await wal.append(b"b", 2, b"2")
     await wal.append(b"c", 3, b"3")
 
-    data = bytearray(path.read_bytes())
+    data = bytearray(log.read_bytes())
     data[middle] ^= 0xFF
-    path.write_bytes(data)
+    log.write_bytes(data)
 
     with pytest.raises(ValueError, match="wal checksum mismatch"):
         _ = [record async for record in wal.recover()]
@@ -295,12 +405,13 @@ async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
     await wal.append(b"a", 1, b"1")
-    last = path.stat().st_size
+    log = wal._path
+    last = log.stat().st_size
     await wal.append(b"b", 2, b"2")
 
-    data = bytearray(path.read_bytes())
+    data = bytearray(log.read_bytes())
     data[last] ^= 0xFF
-    path.write_bytes(data)
+    log.write_bytes(data)
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 1, b"1")]
