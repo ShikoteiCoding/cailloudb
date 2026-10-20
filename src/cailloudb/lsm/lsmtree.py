@@ -10,6 +10,7 @@ from constants import (
 )
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.compactor import Compactor
+from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
@@ -53,6 +54,9 @@ class LSMTree:
     #: Compactor instance
     _compactor: Compactor
 
+    #: File picker instance
+    _file_picker: FilePicker
+
     def __init__(
         self,
         memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
@@ -71,6 +75,7 @@ class LSMTree:
         self.next_file_id = 1
         self._wal = Wal(wal_path) if wal_path is not None else None
         self._compactor = Compactor()
+        self._file_picker = FilePicker(self.levels, self.max_levels)
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -284,14 +289,25 @@ class LSMTree:
     def _sync_compact(self) -> None:
         """
         Compaction of SSTables from L0 to Lmax.
+        NOTE: This is for now a full compaction (not partial) because
+        it acts on the entire level, not specific files.
 
         Properties:
             - Key ordering guarantee inside the SSTable
             - No Key range overlap accross SSTables
         """
-        source_level = 0  # XXX: Develop the file picker
+        source_level = self._file_picker.pick_compaction_level()
+        if source_level is None:
+            return
+
         target_level = source_level + 1
-        input_metas = self.levels[source_level] + self.levels[target_level]
+        source_metas, target_metas = self._file_picker.pick_compaction_files(
+            source_level, target_level
+        )
+        input_metas = source_metas + target_metas
+        if not input_metas:
+            return
+
         input_sstables = [self.sstables_map[meta["file_id"]] for meta in input_metas]
 
         generated_files = self._compactor.compact(
@@ -300,16 +316,23 @@ class LSMTree:
             self.sstable_size * target_level,  # XXX: naive heuristic
         )
 
-        # XXX: Lock the levels / map during this operation
-        self.levels[source_level] = []
-        self.levels[target_level] = []
-
         for meta in input_metas:
             del self.sstables_map[meta["file_id"]]
+
+        generated_metas = []
 
         # XXX: Implement a retry and raise on max retry
         for sstable, meta in generated_files:
             self.sstables_map[sstable.file_id] = sstable
-            self.levels[target_level].append(meta)
+            generated_metas.append(meta)
+
+        # XXX: Lock the levels / map during this operation
+        self._file_picker.apply_compaction_result(
+            source_level,
+            target_level,
+            source_metas,
+            target_metas,
+            generated_metas,
+        )
 
         self.next_file_id += len(generated_files)
