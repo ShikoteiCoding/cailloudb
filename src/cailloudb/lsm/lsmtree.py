@@ -150,8 +150,25 @@ class LSMTree:
                                 None if entry["value"] == TOMBSTONE else entry["value"]
                             )
             else:
-                # XXX: Implement when compaction available
-                return
+                # Levels > 0 are non-overlapping and sorted by key range.
+                for meta in level_files:
+                    smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
+                    largest_key = extract_from_internal_key(meta["largest_key"])[0]
+
+                    # Exit early because of no overlap property
+                    if key < smallest_key:
+                        break
+
+                    if key > largest_key:
+                        continue
+
+                    sstable = self.sstables_map[meta["file_id"]]
+                    entry = sstable.get(key, seq_num)
+                    if entry:
+                        return (
+                            None if entry["value"] == TOMBSTONE else entry["value"]
+                        )
+                    break
         return
 
     def scan(
@@ -242,9 +259,6 @@ class LSMTree:
             # XXX: remove blocking the hotpath with a sync flush
             self._sync_flush()
 
-            # XXX: Remove from hotpath
-            self._flush_compact()
-
     def _sync_flush(self) -> None:
         """
         Synchronous in-process task to write immutable memtables to disk.
@@ -255,9 +269,8 @@ class LSMTree:
             return
 
         while self.immutable_memtables:
-            memtable = self.immutable_memtables.pop(0)
-
             # XXX: Implement a retry and raise on max retry
+            memtable = self.immutable_memtables.pop(0)
             generated_files = write_iterator_to_sstables(
                 iterator=memtable.__iter__(),
                 start_file_id=self.next_file_id,
@@ -270,7 +283,7 @@ class LSMTree:
 
             self.next_file_id += len(generated_files)
 
-    def _flush_compact(self) -> None:
+    def _sync_compact(self) -> None:
         """
         Compaction of SSTables from L0 to Lmax.
 
@@ -278,20 +291,27 @@ class LSMTree:
             - Key ordering guarantee inside the SSTable
             - No Key range overlap accross SSTables
         """
-        # Find level
-        source_level = 0  # XXX
+        source_level = 0  # XXX: Develop the file picker
         target_level = source_level + 1
-
-        # Get metadata
         input_metas = self.levels[source_level] + self.levels[target_level]
-        input_sstables = [self.sstables_map[level["file_id"]] for level in input_metas]
+        input_sstables = [self.sstables_map[meta["file_id"]] for meta in input_metas]
 
-        # Get compaction logic
         generated_files = self._compactor.compact(
             input_sstables,
             self.next_file_id,  # XXX: resolve concurrency with flush
             self.sstable_size * target_level,  # XXX: naive heuristic
         )
 
-        # Commit compaction
-        # TODO
+        # XXX: Lock the levels / map during this operation
+        self.levels[source_level] = []
+        self.levels[target_level] = []
+
+        for meta in input_metas:
+            del self.sstables_map[meta["file_id"]]
+
+        # XXX: Implement a retry and raise on max retry
+        for sstable, meta in generated_files:
+            self.sstables_map[sstable.file_id] = sstable
+            self.levels[target_level].append(meta)
+
+        self.next_file_id += len(generated_files)
