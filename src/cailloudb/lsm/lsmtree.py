@@ -165,9 +165,7 @@ class LSMTree:
                     sstable = self.sstables_map[meta["file_id"]]
                     entry = sstable.get(key, seq_num)
                     if entry:
-                        return (
-                            None if entry["value"] == TOMBSTONE else entry["value"]
-                        )
+                        return None if entry["value"] == TOMBSTONE else entry["value"]
                     break
         return
 

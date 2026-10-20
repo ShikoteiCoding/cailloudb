@@ -22,8 +22,7 @@ class Compactor:
         level_sstable_size: int,
     ) -> list[tuple[SSTable, FileMetaData]]:
         """
-        Synchronous multi-way merge compaction.
-        Returns a list of lightweight metadata objects for the newly written files.
+        K-way merge list of sstables and write new ones.
         """
         # K-way merge all
         merged_iterators = heapq.merge(*sstables_to_merge, key=lambda x: x[0])
@@ -39,9 +38,7 @@ class Compactor:
         self, merged_stream: Iterator[tuple[bytes, bytes]]
     ) -> Iterator[tuple[bytes, bytes]]:
         """
-        Processes a globally sorted stream of keys.
-        Because internal keys sort by (user_key ASC, seq_no DESC), the newest version
-        of a user_key will ALWAYS be yielded first.
+        Dedup keys for low levels and keep latest seq_num.
         """
         last_seen_key = None
 

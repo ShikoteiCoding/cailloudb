@@ -333,12 +333,12 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         "largest_key": b"k4",
         "file_size": 100,
     }
-    lsmtree.levels[0] = [source_meta] # type: ignore
-    lsmtree.levels[1] = [target_meta] # type: ignore
+    lsmtree.levels[0] = [source_meta]  # type: ignore
+    lsmtree.levels[1] = [target_meta]  # type: ignore
 
     source_sstable = object()
     target_sstable = object()
-    lsmtree.sstables_map = { # type: ignore
+    lsmtree.sstables_map = {  # type: ignore
         1: source_sstable,
         2: target_sstable,
     }
@@ -350,6 +350,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         "largest_key": b"k4",
         "file_size": 120,
     }
+
     class MockSSTable:
         def __init__(self, file_id: int):
             self.file_id = file_id
@@ -374,7 +375,10 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_then_scan():
-    lsmtree = LSMTree(memtable_size=10) # should hold only 1 record
+    lsmtree = LSMTree(
+        memtable_size=10,  # should hold only 1 record
+        sstable_size=10,  # should hold only 1 record
+    )
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -388,7 +392,7 @@ async def test_lsmtree_sync_compact_then_scan():
     lsmtree._sync_compact()
 
     assert lsmtree.levels[0] == []
-    assert len(lsmtree.levels[1]) >= 1
+    assert len(lsmtree.levels[1]) == 3
 
     new_level1_file_ids = {meta["file_id"] for meta in lsmtree.levels[1]}
     assert old_level0_file_ids.isdisjoint(new_level1_file_ids)
@@ -404,7 +408,10 @@ async def test_lsmtree_sync_compact_then_scan():
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_then_get():
-    lsmtree = LSMTree(memtable_size=10) # should hold only 1 record
+    lsmtree = LSMTree(
+        memtable_size=10,  # should hold only 1 record
+        sstable_size=10,  # should hold only 1 record
+    )
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -416,7 +423,7 @@ async def test_lsmtree_sync_compact_then_get():
     lsmtree._sync_compact()
 
     assert lsmtree.levels[0] == []
-    assert len(lsmtree.levels[1]) >= 1
+    assert len(lsmtree.levels[1]) == 3
 
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree.get(b"key2", 2) == b"val2"
