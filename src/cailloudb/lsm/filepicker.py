@@ -12,6 +12,7 @@ class FilePicker:
 
     NOTE: Currently very naive algorithm, should be further improved.
     """
+
     #: Reference to LSMTree levels
     _levels: list[list[FileMetaData]]
 
@@ -26,7 +27,7 @@ class FilePicker:
         """
         Find which level to compact.
         """
-        if len(self._levels) < 2:
+        if self._max_levels < 2:
             return -1
 
         # Priority is l0
