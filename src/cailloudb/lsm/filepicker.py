@@ -3,36 +3,37 @@ from constants import (
     SSTABLE_L1_MAX_BYTES,
     SSTABLE_LEVEL_MULTIPLIER,
 )
-
 from custom_types import FileMetaData
 
 
 class FilePicker:
     """
     Selects compaction levels/files and applies compaction metadata updates.
-    """
 
+    NOTE: Currently very naive algorithm, should be further improved.
+    """
+    #: Reference to LSMTree levels
     _levels: list[list[FileMetaData]]
+
+    #: LSMTree max level
     _max_levels: int
 
     def __init__(self, levels: list[list[FileMetaData]], max_levels: int):
         self._levels = levels
         self._max_levels = max_levels
 
-    def pick_compaction_level(self) -> int | None:
+    def pick_compaction_level(self) -> int:
         """
         Find which level to compact.
         """
         if len(self._levels) < 2:
-            return None
+            return -1
 
         # Priority is l0
         if len(self._levels[0]) >= SSTABLE_L0_COMPACTION_TRIGGER:
             return 0
 
-        # Discover other levels compaction needs
         max_bytes = SSTABLE_L1_MAX_BYTES
-        # Last level cannot be source because we compact source -> source + 1.
         source_levels_count = min(self._max_levels, len(self._levels)) - 1
         for level_idx in range(1, source_levels_count):
             current_level_bytes = sum(
@@ -42,7 +43,7 @@ class FilePicker:
                 return level_idx
             max_bytes *= SSTABLE_LEVEL_MULTIPLIER
 
-        return None
+        return -1
 
     def pick_compaction_files(
         self, source_level: int, target_level: int
@@ -54,14 +55,9 @@ class FilePicker:
         target_files: list[FileMetaData]
 
         if source_level == 0:
-            # L0 has overlapping keys natively, safest to grab them all
-            # to ensure we don't violate sequence order.
-            source_files = self._levels[0][:]
-            # Keep existing behavior: compact all files from L1 together with L0.
+            source_files = self._levels[source_level][:]
             target_files = self._levels[target_level][:]
         else:
-            # For L1+, pick the first file that caused the overflow.
-            # (A production DB tracks a round-robin cursor here).
             if not self._levels[source_level]:
                 return [], []
             source_files = [self._levels[source_level][0]]
@@ -79,10 +75,7 @@ class FilePicker:
 
         # Find all files in the target level that overlap with this range.
         for meta in self._levels[target_level]:
-            if (
-                meta["smallest_key"] <= max_key
-                and meta["largest_key"] >= min_key
-            ):
+            if meta["smallest_key"] <= max_key and meta["largest_key"] >= min_key:
                 target_files.append(meta)
 
         return source_files, target_files
@@ -97,18 +90,14 @@ class FilePicker:
     ) -> None:
         """Atomically swap out compacted files and insert new compacted files."""
 
-        # Remove compacted files from source level.
+        # Remove compacted files from source & target
         self._levels[source_level] = [
             meta for meta in self._levels[source_level] if meta not in old_source_files
         ]
-
-        # Remove compacted files from target level.
         self._levels[target_level] = [
             meta for meta in self._levels[target_level] if meta not in old_target_files
         ]
 
-        # Add newly created files to target level.
+        # Update target level + keep ordering
         self._levels[target_level].extend(new_files)
-
-        # L1+ levels must remain sorted by key range.
         self._levels[target_level].sort(key=lambda meta: meta["smallest_key"])

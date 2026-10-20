@@ -1,10 +1,12 @@
 import heapq
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
-from custom_types import FileMetaData
-from lsm.sstable import SSTable
 from lsm.table_builder import write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
+
+if TYPE_CHECKING:
+    from custom_types import FileMetaData
+    from lsm.sstable import SSTable
 
 
 class Compactor:
@@ -28,13 +30,13 @@ class Compactor:
         merged_iterators = heapq.merge(*sstables_to_merge, key=lambda x: x[0])
 
         return write_iterator_to_sstables(
-            self._deduplicate_stream(merged_iterators),
+            self._deduplicate_iterator(merged_iterators),
             next_file_id,
             level_sstable_size,
             in_memory=True,
         )
 
-    def _deduplicate_stream(
+    def _deduplicate_iterator(
         self, merged_stream: Iterator[tuple[bytes, bytes]]
     ) -> Iterator[tuple[bytes, bytes]]:
         """

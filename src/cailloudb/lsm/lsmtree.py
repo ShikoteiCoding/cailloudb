@@ -289,6 +289,7 @@ class LSMTree:
     def _sync_compact(self) -> None:
         """
         Compaction of SSTables from L0 to Lmax.
+        
         NOTE: This is for now a full compaction (not partial) because
         it acts on the entire level, not specific files.
 
@@ -297,7 +298,7 @@ class LSMTree:
             - No Key range overlap accross SSTables
         """
         source_level = self._file_picker.pick_compaction_level()
-        if source_level is None:
+        if source_level == -1:
             return
 
         target_level = source_level + 1
