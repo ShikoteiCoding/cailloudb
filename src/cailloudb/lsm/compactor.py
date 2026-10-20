@@ -14,9 +14,6 @@ class Compactor:
     Compact multiple SSTables into a new level of SSTables.
     """
 
-    def __init__(self):
-        pass
-
     def compact(
         self,
         sstables_to_merge: list[SSTable],
