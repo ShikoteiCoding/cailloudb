@@ -10,21 +10,32 @@ classDiagram
     scan_at(start: bytes | None, end: bytes | None)* AsyncIterator[tuple[bytes, bytes]]
     write(batch: WriteBatch)*
   }
+  class BaseStore {
+    _seq
+    delete(key: bytes)*
+    get(key: bytes)* bytes
+    get_at(key: bytes)* bytes
+    latest_sequence_number()* int
+    put(key: bytes, val: bytes)*
+    scan(start: bytes | None, end: bytes | None)* AsyncIterator[tuple[bytes, bytes]]
+    scan_at(start: bytes | None, end: bytes | None)* AsyncIterator[tuple[bytes, bytes]]
+    write(batch: WriteBatch)*
+  }
   class BlockBuilder {
     buffer : BytesIO
     last_internal_key : bytes
     target_block_size : int
     \_\_init\_\_(block_size: int)
     add(internal_key: bytes, value: bytes)
+    finalize() tuple[bytes, bytes]
     is_empty() bool
     is_full() bool
-    reset() tuple[bytes, bytes]
   }
   class BlockReader {
     data : bytes
     size : int
     \_\_init\_\_(block_data: bytes)
-    \_\_iter\_\_()
+    \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
     get(key: bytes, seq_num: int) tuple[bytes | None, int | None, bool]
   }
   class Db {
@@ -63,16 +74,19 @@ classDiagram
   }
   class DiskStore {
   }
+  class FileMetaData {
+    file_size
+    largest_key
+    smallest_key
+    \_\_init\_\_(smallest_key, largest_key, file_size)
+  }
   class InMemorySSTable {
-    \_\_init\_\_(file: io.BytesIO, path: Path)
+    \_\_init\_\_(file_id: int, file: io.BytesIO, path: Path)
   }
   class InMemoryStore {
     \_\_tree
     _seq
-    _wal
     \_\_init\_\_(wal_path: Path)
-    _apply_delete(key: bytes, seq_num: int)
-    _apply_put(key: bytes, seq_num: int, value: bytes)
     delete(key: bytes)
     get(key: bytes) bytes | None
     get_at(key: bytes) bytes | None
@@ -82,20 +96,54 @@ classDiagram
     scan_at(start: bytes | None, end: bytes | None) AsyncIterator[tuple[bytes, bytes]]
     write(batch: WriteBatch)
   }
+  class KeyIndex {
+    _keys : list[bytes]
+    \_\_init\_\_()
+    insert(key: bytes) None
+    range(start: bytes | None, end: bytes | None) Iterator[bytes]
+    remove(key: bytes) None
+  }
   class LSMTree {
+    _wal : Wal | None
     immutable_memtables : list[MemTable]
+    levels : list[list[FileMetaData]]
+    max_levels : int
     memtable
     memtable_size : int
     next_file_id : int
-    sstable_writer
-    sstables : list[SSTable]
-    \_\_init\_\_(memtable_size: int)
-    _rotate_memtable() None
+    sstable_size : int
+    sstables_map : dict[int, SSTable]
+    table_builder
+    \_\_init\_\_(memtable_size: int, sstable_size: int, max_levels: int, wal_path: Path | None)
+    _insert(key: bytes, seq_num: int, value: bytes) None
+    _maybe_rotate_memtable() None
     _sync_flush() None
     delete(key: bytes, seq_num: int) None
     get(key: bytes, seq_num: int) bytes | None
     put(key: bytes, seq_num: int, value: bytes) None
     scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[tuple[bytes, bytes]]
+    write(batch: WriteBatch, seq_num: int) int
+  }
+  class LSMTree {
+    _wal : Wal | None
+    immutable_memtables : list[MemTable]
+    levels : list[list[FileMetaData]]
+    max_levels : int
+    memtable
+    memtable_size : int
+    next_file_id : int
+    sstable_size : int
+    sstables_map : dict[int, SSTable]
+    table_builder
+    \_\_init\_\_(memtable_size: int, sstable_size: int, max_levels: int, wal_path: Path | None)
+    _insert(key: bytes, seq_num: int, value: bytes) None
+    _maybe_rotate_memtable() None
+    _sync_flush() None
+    delete(key: bytes, seq_num: int) None
+    get(key: bytes, seq_num: int) bytes | None
+    put(key: bytes, seq_num: int, value: bytes) None
+    scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[tuple[bytes, bytes]]
+    write(batch: WriteBatch, seq_num: int) int
   }
   class MemTable {
     bytes_size : int
@@ -104,6 +152,20 @@ classDiagram
     \_\_init\_\_(max_bytes_size: int)
     \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
     \_\_len\_\_()
+    \_\_next\_\_()
+    get(key: bytes, seq_num: int) MemTableEntry | None
+    insert(key: bytes, seq_num: int, value: bytes) None
+    is_full() bool
+    scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[MemTableEntry]
+  }
+  class MemTable {
+    bytes_size : int
+    max_bytes_size : int
+    skiplist
+    \_\_init\_\_(max_bytes_size: int)
+    \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
+    \_\_len\_\_()
+    \_\_next\_\_()
     get(key: bytes, seq_num: int) MemTableEntry | None
     insert(key: bytes, seq_num: int, value: bytes) None
     is_full() bool
@@ -116,28 +178,26 @@ classDiagram
   }
   class SSTable {
     file : BytesIO
+    file_id : int
     index_keys : list[bytes]
     index_meta : list[tuple[int, int]]
     path : Path
-    \_\_init\_\_(file: io.BytesIO, path: Path)
+    \_\_init\_\_(file_id: int, file: io.BytesIO, path: Path)
     \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
     _load_index()
-    _read_block(offset: int, length: int) bytes
+    _read_block_from(offset: int, length: int) bytes
     get(key: bytes, seq_num: int) SSTableEntry | None
     scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[SSTableEntry]
+  }
+  class SSTableCompactor {
+    \_\_init\_\_()*
+    _deduplicate_stream(merged_stream: Iterator[tuple[bytes, bytes]]) Iterator[tuple[bytes, bytes]]
+    compact(source_files: list[FileMetaData], target_files: list[FileMetaData], sstable_writer: TableBuilder, next_file_id: int, target_level: int) list[FileMetaData]
   }
   class SSTableEntry {
     key : bytes
     seq_num : int
     value : bytes
-  }
-  class SSTableWriter {
-    block_size : int
-    dir : Path | None
-    in_memory : bool
-    max_file_size : int
-    \_\_init\_\_(in_memory: bool, dir: Path | None, block_size: int, max_file_size: int)
-    write(memtable: MemTable, file_id: int) list[SSTable]
   }
   class SeqNum {
     _value : int
@@ -161,24 +221,70 @@ classDiagram
     \_\_init\_\_(max_level: int, p: float)
     \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
     \_\_len\_\_() int
+    \_\_next\_\_()*
     _random_level() int
     get(key: bytes, seq_num: int) MemTableEntry | None
     insert(key: bytes, seq_num: int, value: bytes) None
     scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[MemTableEntry]
   }
+  class SkipList {
+    _size : int
+    bytes_size : int
+    header
+    level : int
+    max_level : int
+    p : float
+    \_\_init\_\_(max_level: int, p: float)
+    \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
+    \_\_len\_\_() int
+    \_\_next\_\_()*
+    _random_level() int
+    get(key: bytes, seq_num: int) MemTableEntry | None
+    insert(key: bytes, seq_num: int, value: bytes) None
+    scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[MemTableEntry]
+  }
+  class TableBuilder {
+    block_size : int
+    dir : Path | None
+    in_memory : bool
+    max_file_size : int
+    \_\_init\_\_(in_memory: bool, dir: Path | None, block_size: int, max_file_size: int)
+    write(iterator: Iterator[tuple[bytes, bytes]], file_id: int) list[tuple[SSTable, FileMetaData]]
+  }
+  class TableBuilder {
+    block_size : int
+    dir : Path | None
+    in_memory : bool
+    max_file_size : int
+    \_\_init\_\_(in_memory: bool, dir: Path | None, block_size: int, max_file_size: int)
+    write(iterator: Iterator[tuple[bytes, bytes]], file_id: int) list[tuple[SSTable, FileMetaData]]
+  }
   class Wal {
-    _BATCH_KIND : int
-    _CRC : Struct
-    _HEADER : int
-    _LEN : Struct
-    _PLEN : Struct
-    _SEQ : Struct
-    _SINGLE_KIND : int
-    _TS : Struct
     _path : Path
     \_\_init\_\_(path: Path)
-    _pack_record(payload: bytes) bytes
-    append(key: bytes | WriteBatch, seq_num: int, value: bytes | None) int
+    _append_batch(f, body: bytes) None
+    _append_single(f, body: bytes) None
+    _batch_ops(batch_body: bytes) Iterator[tuple[bytes, int, bytes]]
+    _build_physical_record(kind: int, payload: bytes) bytes
+    _padding_short_tail(f, block_off: int) int
+    _physical_records(data: bytes) Iterator[tuple[int, bytes]]
+    _single_ops(body: bytes) Iterator[tuple[bytes, int, bytes]]
+    append(key: bytes | WriteBatch, seq_num: int, value: bytes | None) None
+    clear()
+    records() Iterator[tuple[bytes, int, bytes]]
+    recover() AsyncIterator[tuple[bytes, int, bytes]]
+  }
+  class Wal {
+    _path : Path
+    \_\_init\_\_(path: Path)
+    _append_batch(f, body: bytes) None
+    _append_single(f, body: bytes) None
+    _batch_ops(batch_body: bytes) Iterator[tuple[bytes, int, bytes]]
+    _build_physical_record(kind: int, payload: bytes) bytes
+    _padding_short_tail(f, block_off: int) int
+    _physical_records(data: bytes) Iterator[tuple[int, bytes]]
+    _single_ops(body: bytes) Iterator[tuple[bytes, int, bytes]]
+    append(key: bytes | WriteBatch, seq_num: int, value: bytes | None) None
     clear()
     records() Iterator[tuple[bytes, int, bytes]]
     recover() AsyncIterator[tuple[bytes, int, bytes]]
@@ -206,23 +312,35 @@ classDiagram
     key : bytes
     seq_num : int
     value : bytes
-    value_type : int
+    \_\_init\_\_(internal_key: bytes, value: bytes, level: int)
+  }
+  class _SkipNode {
+    \_\_slots\_\_ : tuple
+    forward : list[_SkipNode]
+    internal_key : bytes
+    key : bytes
+    seq_num : int
+    value : bytes
     \_\_init\_\_(internal_key: bytes, value: bytes, level: int)
   }
   InMemorySSTable --|> SSTable
   InMemoryStore --|> BaseStore
   _SkipNode --> _SkipNode : forward
   BaseStore --> SeqNum : _seq
-  LSMTree --> MemTable : immutable_memtables
+  BaseStore --> SeqNum : _seq
   _SkipNode --> _SkipNode : forward
+  LSMTree --> Wal : _wal
+  LSMTree --> Wal : _wal
   _SkipNode --* SkipList : header
   SeqNum --* InMemoryStore : _seq
   LSMTree --* InMemoryStore : \_\_tree
   MemTable --* LSMTree : memtable
+  MemTable --* LSMTree : memtable
+  SkipList --* MemTable : skiplist
   SkipList --* MemTable : skiplist
   _SkipNode --* SkipList : header
-  SSTableWriter --* LSMTree : sstable_writer
-  Wal --* InMemoryStore : _wal
+  TableBuilder --* LSMTree : table_builder
+  TableBuilder --* LSMTree : table_builder
   BaseStore --o Db : store
   BaseStore --o DbBuilder : store
   BaseStore --o DbReader : _store

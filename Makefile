@@ -1,5 +1,5 @@
 ruff:
-	uv run ruff format . && uv run ruff check --select I --select F401 --fix .
+	uv run ruff format . && uv run ruff check --select I --fix .
 
 test:
 	cd src && PYTHONPATH=cailloudb uv run pytest -vv -s --cov cailloudb --cov-report=markdown

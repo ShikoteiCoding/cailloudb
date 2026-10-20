@@ -2,10 +2,17 @@ import heapq
 from pathlib import Path
 from typing import Iterator
 
-from constants import TOMBSTONE
+from constants import (
+    MEMTABLE_MAX_BYTES_SIZE,
+    SSTABLE_MAX_FILE_SIZE,
+    SSTABLE_MAX_LEVELS,
+    TOMBSTONE,
+)
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.memtable import MemTable
-from lsm.sstable import SSTable, SSTableWriter
+from lsm.sstable import SSTable
+from lsm.table_builder import FileMetaData, write_iterator_to_sstables
+from lsm.utils import build_internal_key, extract_from_internal_key
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -18,30 +25,47 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
+    memtable_size: int
+    sstable_size: int
+    max_levels: int
+
+    #: Active memtable instance for in-memory O(1) writes
+    memtable: MemTable
+
+    #: Immutable memtables waiting to be flushed
+    immutable_memtables: list[MemTable]
+
+    #: SSTables map from "file_id" to SSTable pointer
+    sstables_map: dict[int, SSTable]
+
+    #: List of levels of SSTable metadata
+    #: l0 -> overlapping ranges, update history, ordered by seq_num
+    #: l{1...N} -> non overlapping ranges, no history, sorted by key
+    levels: list[list[FileMetaData]]
+
+    #: Next file id for .sst
+    next_file_id: int
+
+    #: Write-ahead log writer
+    _wal: Wal | None
+
     def __init__(
         self,
-        memtable_size: int = 32 * 1024 * 1024,
+        memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
+        sstable_size: int = SSTABLE_MAX_FILE_SIZE,
+        max_levels: int = SSTABLE_MAX_LEVELS,
         wal_path: Path | None = None,
     ):
         self.memtable_size = memtable_size
+        self.sstable_size = sstable_size
+        self.max_levels = max_levels
 
-        #: Write-ahead log writer
-        self._wal = Wal(wal_path) if wal_path is not None else None
-
-        #: Active memtable instance for in-memory O(1) writes
         self.memtable = MemTable(max_bytes_size=memtable_size)
-
-        #: Immutable memtables waiting to be flushed
-        self.immutable_memtables: list[MemTable] = []
-
-        #: SSTable writer
-        self.sstable_writer: SSTableWriter = SSTableWriter(in_memory=True)
-
-        #: List of SSTables
-        self.sstables: list[SSTable] = []
-
-        #: Next file id for .sst
+        self.immutable_memtables = []
+        self.sstables_map = {}
+        self.levels = [[] for _ in range(max_levels)]
         self.next_file_id = 1
+        self._wal = Wal(wal_path) if wal_path is not None else None
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -59,12 +83,6 @@ class LSMTree:
             await self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
 
-    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
-        """Apply one operation to memtable"""
-        self.memtable.insert(key, seq_num, value)
-        if self.memtable.is_full():
-            self._rotate_memtable()
-
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
         """
         Apply each operation in the batch, starting at `seq_num`.
@@ -79,6 +97,7 @@ class LSMTree:
             self._insert(key, seq_num, value)
             seq_num += 1
             applied += 1
+        self._maybe_rotate_memtable()
         return applied
 
     def get(self, key: bytes, seq_num: int) -> bytes | None:
@@ -87,6 +106,7 @@ class LSMTree:
 
         LSMTree is responsible for the tombstone logic.
         """
+        # TODO: implement bloom filter
         # Assumptions
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check
@@ -96,23 +116,38 @@ class LSMTree:
 
         # Tombstone conversion happens here
         if entry:
-            if entry["value"] == TOMBSTONE:
-                return None
-            return entry["value"]
+            return None if entry["value"] == TOMBSTONE else entry["value"]
+
+        # TODO: solve concurrency issue when memtables are queued for flushing
+        for imm in reversed(self.immutable_memtables):
+            entry = imm.get(key, seq_num)
+            if entry:
+                return None if entry["value"] == TOMBSTONE else entry["value"]
 
         # Check SSTables in reverse order
-        # TODO: solve concurrency issue when memtables are queued for flushing
-        # TODO: implement bloom filter
-        for sstable in reversed(self.sstables):
-            entry = sstable.get(key, seq_num)
+        for level_idx, level_files in enumerate(self.levels):
+            if not level_files:
+                continue
 
-            # Tombstone conversion happens here
-            if entry:
-                if entry["value"] == TOMBSTONE:
-                    return None
-                return entry["value"]
-
-        return None
+            if level_idx == 0:
+                # Level 0 can overlap, all files must be checked
+                for meta in reversed(level_files):
+                    # XXX: cpu-costly, should be optimized
+                    if (
+                        extract_from_internal_key(meta["smallest_key"])[0]
+                        <= key
+                        <= extract_from_internal_key(meta["largest_key"])[0]
+                    ):
+                        sstable = self.sstables_map[meta["file_id"]]
+                        entry = sstable.get(key, seq_num)
+                        if entry:
+                            return (
+                                None if entry["value"] == TOMBSTONE else entry["value"]
+                            )
+            else:
+                # XXX: Implement when compaction available
+                return
+        return
 
     def scan(
         self, start_key: bytes | None, end_key: bytes | None, seq_num: int
@@ -130,8 +165,30 @@ class LSMTree:
         # Get all iterators
         iterators = []
         iterators.append(self.memtable.scan(start_key, end_key, seq_num))
-        for sst in self.sstables:
-            iterators.append(sst.scan(start_key, end_key, seq_num))
+
+        # TODO: solve concurrency issue when memtables are queued for flushing
+        for imm in self.immutable_memtables:
+            iterators.append(imm.scan(start_key, end_key, seq_num))
+
+        for level_idx, level_files in enumerate(self.levels):
+            for meta in level_files:
+                # XXX: cpu-costly, should be optimized
+                file_smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
+                file_largest_key = extract_from_internal_key(meta["largest_key"])[0]
+
+                if start_key is not None and file_largest_key < start_key:
+                    continue
+
+                if end_key is not None and file_smallest_key >= end_key:
+                    # Continue on level 0 as key overlap will exist
+                    if level_idx == 0:
+                        continue
+                    # Exit loop as level n+1 are non overlapping and sorted
+                    else:
+                        break
+
+                sst = self.sstables_map[meta["file_id"]]
+                iterators.append(sst.scan(start_key, end_key, seq_num))
 
         # Aggregator function for whichever iterator
         def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
@@ -143,11 +200,11 @@ class LSMTree:
                 yield (entry["key"], -entry["seq_num"], entry["value"])
 
         # K-way merge
-        merged_stream = heapq.merge(*[iterator_agg(it) for it in iterators])
+        merged_entries = heapq.merge(*[iterator_agg(it) for it in iterators])
 
         last_processed_key = None
 
-        for key, neg_seq, value in merged_stream:
+        for key, neg_seq, value in merged_entries:
             entry_seq = -neg_seq
 
             if entry_seq > seq_num:
@@ -162,25 +219,45 @@ class LSMTree:
 
             last_processed_key = key
 
-    def _rotate_memtable(self) -> None:
+    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+        """
+        Apply one operation to the active memtable.
+        """
+        self.memtable.insert(key, seq_num, value)
+        self._maybe_rotate_memtable()
+
+    def _maybe_rotate_memtable(self) -> None:
         """
         Flush full memtable(s) to SSTable and create a new active memtable.
         """
-        self.immutable_memtables.append(self.memtable)
-        self.memtable = MemTable(max_bytes_size=self.memtable_size)
-        self._sync_flush()
+        if self.memtable.is_full():
+            self.immutable_memtables.append(self.memtable)
+            self.memtable = MemTable(max_bytes_size=self.memtable_size)
+
+            # XXX: remove blocking the hotpath with a sync flush
+            self._sync_flush()
 
     def _sync_flush(self) -> None:
         """
-        Sync in-process task to write immutable memtables to disk.
+        Synchronous in-process task to write immutable memtables to disk.
+
+        Flush proces is uniquely responsible for appending to the l0 level.
         """
         if not self.immutable_memtables:
             return
 
         while self.immutable_memtables:
             memtable = self.immutable_memtables.pop(0)
-            sstables = self.sstable_writer.write(memtable, self.next_file_id)
-            self.next_file_id += len(sstables)
 
-            for sstable in sstables:
-                self.sstables.append(sstable)
+            # XXX: Implement a retry and raise on max retry
+            generated_files = write_iterator_to_sstables(
+                iterator=memtable.__iter__(),
+                start_file_id=self.next_file_id,
+                max_file_size=self.sstable_size,
+            )
+
+            for sstable, meta in generated_files:
+                self.sstables_map[sstable.file_id] = sstable
+                self.levels[0].append(meta)
+
+            self.next_file_id += len(generated_files)

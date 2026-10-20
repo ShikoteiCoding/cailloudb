@@ -30,6 +30,14 @@ def build_internal_key(key: bytes, seq_num: int, is_delete: bool) -> bytes:
 def extract_from_internal_key(
     internal_key: bytes,
 ) -> tuple[bytes, int, Literal[0] | Literal[1]]:
+    """
+    Extract the key, seq_num and value_type from an internal key.
+
+    Internal_key always follow:
+        [ Key ][ ~SeqNum ][ ValueType ]
+
+    ValueType: PUT or DELETE
+    """
     table_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
     # Unpack metadata to get sequence number and value type
     metadata_bytes = internal_key[-INTERNAL_KEY_METADATA_STRUCT.size :]
