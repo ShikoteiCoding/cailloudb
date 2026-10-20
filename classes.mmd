@@ -27,6 +27,18 @@ classDiagram
     target_block_size : int
     \_\_init\_\_(block_size: int)
     add(internal_key: bytes, value: bytes)
+    estimated_size() int
+    finalize() tuple[bytes, bytes]
+    is_empty() bool
+    is_full() bool
+  }
+  class BlockBuilder {
+    buffer : BytesIO
+    last_internal_key : bytes
+    target_block_size : int
+    \_\_init\_\_(block_size: int)
+    add(internal_key: bytes, value: bytes)
+    estimated_size() int
     finalize() tuple[bytes, bytes]
     is_empty() bool
     is_full() bool
@@ -37,6 +49,16 @@ classDiagram
     \_\_init\_\_(block_data: bytes)
     \_\_iter\_\_() Iterator[tuple[bytes, bytes]]
     get(key: bytes, seq_num: int) tuple[bytes | None, int | None, bool]
+  }
+  class Compactor {
+    \_\_init\_\_()*
+    _deduplicate_iterator(merged_stream: Iterator[tuple[bytes, bytes]]) Iterator[tuple[bytes, bytes]]
+    compact(sstables_to_merge: list[SSTable], next_file_id: int, level_sstable_size: int) list[tuple[SSTable, FileMetaData]]
+  }
+  class Compactor {
+    \_\_init\_\_()*
+    _deduplicate_iterator(merged_stream: Iterator[tuple[bytes, bytes]]) Iterator[tuple[bytes, bytes]]
+    compact(sstables_to_merge: list[SSTable], next_file_id: int, level_sstable_size: int) list[tuple[SSTable, FileMetaData]]
   }
   class Db {
     store
@@ -75,10 +97,26 @@ classDiagram
   class DiskStore {
   }
   class FileMetaData {
-    file_size
-    largest_key
-    smallest_key
-    \_\_init\_\_(smallest_key, largest_key, file_size)
+    file_id : int
+    file_size : int
+    largest_key : bytes
+    smallest_key : bytes
+  }
+  class FilePicker {
+    _levels : list[list[FileMetaData]]
+    _max_levels : int
+    \_\_init\_\_(levels: list[list[FileMetaData]], max_levels: int)
+    apply_compaction_result(source_level: int, target_level: int, old_source_files: list[FileMetaData], old_target_files: list[FileMetaData], new_files: list[FileMetaData]) None
+    pick_compaction_files(source_level: int, target_level: int) tuple[list[FileMetaData], list[FileMetaData]]
+    pick_compaction_level() int
+  }
+  class FilePicker {
+    _levels : list[list[FileMetaData]]
+    _max_levels : int
+    \_\_init\_\_(levels: list[list[FileMetaData]], max_levels: int)
+    apply_compaction_result(source_level: int, target_level: int, old_source_files: list[FileMetaData], old_target_files: list[FileMetaData], new_files: list[FileMetaData]) None
+    pick_compaction_files(source_level: int, target_level: int) tuple[list[FileMetaData], list[FileMetaData]]
+    pick_compaction_level() int
   }
   class InMemorySSTable {
     \_\_init\_\_(file_id: int, file: io.BytesIO, path: Path)
@@ -104,19 +142,21 @@ classDiagram
     remove(key: bytes) None
   }
   class LSMTree {
+    _compactor
+    _file_picker
+    _immutable_memtables : list[MemTable]
+    _levels : list[list[FileMetaData]]
+    _memtable
+    _next_file_id : int
+    _sstables_map : dict[int, SSTable]
     _wal : Wal | None
-    immutable_memtables : list[MemTable]
-    levels : list[list[FileMetaData]]
     max_levels : int
-    memtable
     memtable_size : int
-    next_file_id : int
     sstable_size : int
-    sstables_map : dict[int, SSTable]
-    table_builder
     \_\_init\_\_(memtable_size: int, sstable_size: int, max_levels: int, wal_path: Path | None)
     _insert(key: bytes, seq_num: int, value: bytes) None
     _maybe_rotate_memtable() None
+    _sync_compact() None
     _sync_flush() None
     delete(key: bytes, seq_num: int) None
     get(key: bytes, seq_num: int) bytes | None
@@ -125,19 +165,21 @@ classDiagram
     write(batch: WriteBatch, seq_num: int) int
   }
   class LSMTree {
+    _compactor
+    _file_picker
+    _immutable_memtables : list[MemTable]
+    _levels : list[list[FileMetaData]]
+    _memtable
+    _next_file_id : int
+    _sstables_map : dict[int, SSTable]
     _wal : Wal | None
-    immutable_memtables : list[MemTable]
-    levels : list[list[FileMetaData]]
     max_levels : int
-    memtable
     memtable_size : int
-    next_file_id : int
     sstable_size : int
-    sstables_map : dict[int, SSTable]
-    table_builder
     \_\_init\_\_(memtable_size: int, sstable_size: int, max_levels: int, wal_path: Path | None)
     _insert(key: bytes, seq_num: int, value: bytes) None
     _maybe_rotate_memtable() None
+    _sync_compact() None
     _sync_flush() None
     delete(key: bytes, seq_num: int) None
     get(key: bytes, seq_num: int) bytes | None
@@ -189,11 +231,6 @@ classDiagram
     get(key: bytes, seq_num: int) SSTableEntry | None
     scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[SSTableEntry]
   }
-  class SSTableCompactor {
-    \_\_init\_\_()*
-    _deduplicate_stream(merged_stream: Iterator[tuple[bytes, bytes]]) Iterator[tuple[bytes, bytes]]
-    compact(source_files: list[FileMetaData], target_files: list[FileMetaData], sstable_writer: TableBuilder, next_file_id: int, target_level: int) list[FileMetaData]
-  }
   class SSTableEntry {
     key : bytes
     seq_num : int
@@ -244,20 +281,21 @@ classDiagram
     scan(start_key: bytes | None, end_key: bytes | None, seq_num: int) Iterator[MemTableEntry]
   }
   class TableBuilder {
+    block_builder
     block_size : int
+    current_offset : int
     dir : Path | None
+    file_id : int
     in_memory : bool
-    max_file_size : int
-    \_\_init\_\_(in_memory: bool, dir: Path | None, block_size: int, max_file_size: int)
-    write(iterator: Iterator[tuple[bytes, bytes]], file_id: int) list[tuple[SSTable, FileMetaData]]
-  }
-  class TableBuilder {
-    block_size : int
-    dir : Path | None
-    in_memory : bool
-    max_file_size : int
-    \_\_init\_\_(in_memory: bool, dir: Path | None, block_size: int, max_file_size: int)
-    write(iterator: Iterator[tuple[bytes, bytes]], file_id: int) list[tuple[SSTable, FileMetaData]]
+    index_entries : list
+    largest_key : bytes
+    out : BytesIO
+    smallest_key : bytes
+    \_\_init\_\_(file_id: int, in_memory: bool, dir: Path | None, block_size: int)
+    _flush_block()
+    add(internal_key: bytes, value: bytes) None
+    estimated_size() int
+    finish() tuple[SSTable, FileMetaData]
   }
   class Wal {
     _path : Path
@@ -333,14 +371,17 @@ classDiagram
   LSMTree --> Wal : _wal
   _SkipNode --* SkipList : header
   SeqNum --* InMemoryStore : _seq
+  BlockBuilder --* TableBuilder : block_builder
+  Compactor --* LSMTree : _compactor
+  Compactor --* LSMTree : _compactor
+  FilePicker --* LSMTree : _file_picker
+  FilePicker --* LSMTree : _file_picker
   LSMTree --* InMemoryStore : \_\_tree
-  MemTable --* LSMTree : memtable
-  MemTable --* LSMTree : memtable
+  MemTable --* LSMTree : _memtable
+  MemTable --* LSMTree : _memtable
   SkipList --* MemTable : skiplist
   SkipList --* MemTable : skiplist
   _SkipNode --* SkipList : header
-  TableBuilder --* LSMTree : table_builder
-  TableBuilder --* LSMTree : table_builder
   BaseStore --o Db : store
   BaseStore --o DbBuilder : store
   BaseStore --o DbReader : _store
