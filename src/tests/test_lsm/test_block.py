@@ -80,4 +80,5 @@ def test_block_reader_get_non_existing_key():
     block_reader = BlockReader(block_data)
 
     assert block_reader.get(key, 0) == (value, 0, False)
+    assert block_reader.get(b"key2", 0) == (None, None, False)
     assert block_reader.get(b"key2", 1) == (None, None, False)

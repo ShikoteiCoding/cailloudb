@@ -9,10 +9,11 @@ from constants import (
     TOMBSTONE,
 )
 from custom_types import MemTableEntry, SSTableEntry
+from lsm.compactor import Compactor
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
-from lsm.utils import build_internal_key, extract_from_internal_key
+from lsm.utils import extract_from_internal_key
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -49,6 +50,9 @@ class LSMTree:
     #: Write-ahead log writer
     _wal: Wal | None
 
+    #: Compactor instance
+    _compactor: Compactor
+
     def __init__(
         self,
         memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
@@ -66,6 +70,7 @@ class LSMTree:
         self.levels = [[] for _ in range(max_levels)]
         self.next_file_id = 1
         self._wal = Wal(wal_path) if wal_path is not None else None
+        self._compactor = Compactor()
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -237,6 +242,9 @@ class LSMTree:
             # XXX: remove blocking the hotpath with a sync flush
             self._sync_flush()
 
+            # XXX: Remove from hotpath
+            self._flush_compact()
+
     def _sync_flush(self) -> None:
         """
         Synchronous in-process task to write immutable memtables to disk.
@@ -261,3 +269,29 @@ class LSMTree:
                 self.levels[0].append(meta)
 
             self.next_file_id += len(generated_files)
+
+    def _flush_compact(self) -> None:
+        """
+        Compaction of SSTables from L0 to Lmax.
+
+        Properties:
+            - Key ordering guarantee inside the SSTable
+            - No Key range overlap accross SSTables
+        """
+        # Find level
+        source_level = 0  # XXX
+        target_level = source_level + 1
+
+        # Get metadata
+        input_metas = self.levels[source_level] + self.levels[target_level]
+        input_sstables = [self.sstables_map[level["file_id"]] for level in input_metas]
+
+        # Get compaction logic
+        generated_files = self._compactor.compact(
+            input_sstables,
+            self.next_file_id,  # XXX: resolve concurrency with flush
+            self.sstable_size * target_level,  # XXX: naive heuristic
+        )
+
+        # Commit compaction
+        # TODO
