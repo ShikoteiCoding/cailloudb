@@ -9,10 +9,12 @@ from constants import (
     TOMBSTONE,
 )
 from custom_types import MemTableEntry, SSTableEntry
+from lsm.compactor import Compactor
+from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
-from lsm.utils import build_internal_key, extract_from_internal_key
+from lsm.utils import extract_from_internal_key
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -30,24 +32,30 @@ class LSMTree:
     max_levels: int
 
     #: Active memtable instance for in-memory O(1) writes
-    memtable: MemTable
+    _memtable: MemTable
 
     #: Immutable memtables waiting to be flushed
-    immutable_memtables: list[MemTable]
+    _immutable_memtables: list[MemTable]
 
     #: SSTables map from "file_id" to SSTable pointer
-    sstables_map: dict[int, SSTable]
+    _sstables_map: dict[int, SSTable]
 
     #: List of levels of SSTable metadata
     #: l0 -> overlapping ranges, update history, ordered by seq_num
     #: l{1...N} -> non overlapping ranges, no history, sorted by key
-    levels: list[list[FileMetaData]]
+    _levels: list[list[FileMetaData]]
 
     #: Next file id for .sst
-    next_file_id: int
+    _next_file_id: int
 
     #: Write-ahead log writer
     _wal: Wal | None
+
+    #: Compactor instance
+    _compactor: Compactor
+
+    #: File picker instance
+    _file_picker: FilePicker
 
     def __init__(
         self,
@@ -60,12 +68,14 @@ class LSMTree:
         self.sstable_size = sstable_size
         self.max_levels = max_levels
 
-        self.memtable = MemTable(max_bytes_size=memtable_size)
-        self.immutable_memtables = []
-        self.sstables_map = {}
-        self.levels = [[] for _ in range(max_levels)]
-        self.next_file_id = 1
+        self._memtable = MemTable(max_bytes_size=memtable_size)
+        self._immutable_memtables = []
+        self._sstables_map = {}
+        self._levels = [[] for _ in range(max_levels)]
+        self._next_file_id = 1
         self._wal = Wal(wal_path) if wal_path is not None else None
+        self._compactor = Compactor()
+        self._file_picker = FilePicker(self._levels, self.max_levels)
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -112,20 +122,20 @@ class LSMTree:
         #   there is never any immutable memtables to check
 
         # Check active memtable first
-        entry = self.memtable.get(key, seq_num)
+        entry = self._memtable.get(key, seq_num)
 
         # Tombstone conversion happens here
         if entry:
             return None if entry["value"] == TOMBSTONE else entry["value"]
 
         # TODO: solve concurrency issue when memtables are queued for flushing
-        for imm in reversed(self.immutable_memtables):
+        for imm in reversed(self._immutable_memtables):
             entry = imm.get(key, seq_num)
             if entry:
                 return None if entry["value"] == TOMBSTONE else entry["value"]
 
         # Check SSTables in reverse order
-        for level_idx, level_files in enumerate(self.levels):
+        for level_idx, level_files in enumerate(self._levels):
             if not level_files:
                 continue
 
@@ -138,15 +148,30 @@ class LSMTree:
                         <= key
                         <= extract_from_internal_key(meta["largest_key"])[0]
                     ):
-                        sstable = self.sstables_map[meta["file_id"]]
+                        sstable = self._sstables_map[meta["file_id"]]
                         entry = sstable.get(key, seq_num)
                         if entry:
                             return (
                                 None if entry["value"] == TOMBSTONE else entry["value"]
                             )
             else:
-                # XXX: Implement when compaction available
-                return
+                # Levels > 0 are non-overlapping and sorted by key range.
+                for meta in level_files:
+                    smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
+                    largest_key = extract_from_internal_key(meta["largest_key"])[0]
+
+                    # Exit early because of no overlap property
+                    if key < smallest_key:
+                        break
+
+                    if key > largest_key:
+                        continue
+
+                    sstable = self._sstables_map[meta["file_id"]]
+                    entry = sstable.get(key, seq_num)
+                    if entry:
+                        return None if entry["value"] == TOMBSTONE else entry["value"]
+                    break
         return
 
     def scan(
@@ -164,13 +189,13 @@ class LSMTree:
 
         # Get all iterators
         iterators = []
-        iterators.append(self.memtable.scan(start_key, end_key, seq_num))
+        iterators.append(self._memtable.scan(start_key, end_key, seq_num))
 
         # TODO: solve concurrency issue when memtables are queued for flushing
-        for imm in self.immutable_memtables:
+        for imm in self._immutable_memtables:
             iterators.append(imm.scan(start_key, end_key, seq_num))
 
-        for level_idx, level_files in enumerate(self.levels):
+        for level_idx, level_files in enumerate(self._levels):
             for meta in level_files:
                 # XXX: cpu-costly, should be optimized
                 file_smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
@@ -187,7 +212,7 @@ class LSMTree:
                     else:
                         break
 
-                sst = self.sstables_map[meta["file_id"]]
+                sst = self._sstables_map[meta["file_id"]]
                 iterators.append(sst.scan(start_key, end_key, seq_num))
 
         # Aggregator function for whichever iterator
@@ -223,16 +248,16 @@ class LSMTree:
         """
         Apply one operation to the active memtable.
         """
-        self.memtable.insert(key, seq_num, value)
+        self._memtable.insert(key, seq_num, value)
         self._maybe_rotate_memtable()
 
     def _maybe_rotate_memtable(self) -> None:
         """
         Flush full memtable(s) to SSTable and create a new active memtable.
         """
-        if self.memtable.is_full():
-            self.immutable_memtables.append(self.memtable)
-            self.memtable = MemTable(max_bytes_size=self.memtable_size)
+        if self._memtable.is_full():
+            self._immutable_memtables.append(self._memtable)
+            self._memtable = MemTable(max_bytes_size=self.memtable_size)
 
             # XXX: remove blocking the hotpath with a sync flush
             self._sync_flush()
@@ -243,21 +268,72 @@ class LSMTree:
 
         Flush proces is uniquely responsible for appending to the l0 level.
         """
-        if not self.immutable_memtables:
+        if not self._immutable_memtables:
             return
 
-        while self.immutable_memtables:
-            memtable = self.immutable_memtables.pop(0)
-
+        while self._immutable_memtables:
             # XXX: Implement a retry and raise on max retry
+            memtable = self._immutable_memtables.pop(0)
             generated_files = write_iterator_to_sstables(
                 iterator=memtable.__iter__(),
-                start_file_id=self.next_file_id,
+                start_file_id=self._next_file_id,
                 max_file_size=self.sstable_size,
             )
 
             for sstable, meta in generated_files:
-                self.sstables_map[sstable.file_id] = sstable
-                self.levels[0].append(meta)
+                self._sstables_map[sstable.file_id] = sstable
+                self._levels[0].append(meta)
 
-            self.next_file_id += len(generated_files)
+            self._next_file_id += len(generated_files)
+
+    def _sync_compact(self) -> None:
+        """
+        Compaction of SSTables from L0 to Lmax.
+
+        NOTE: This is for now a full compaction (not partial) because
+        it acts on the entire level, not specific files.
+
+        Properties:
+            - Key ordering guarantee inside the SSTable
+            - No Key range overlap accross SSTables
+        """
+        source_level = self._file_picker.pick_compaction_level()
+        if source_level == -1:
+            return
+
+        target_level = source_level + 1
+        source_metas, target_metas = self._file_picker.pick_compaction_files(
+            source_level, target_level
+        )
+        input_metas = source_metas + target_metas
+        if not input_metas:
+            return
+
+        input_sstables = [self._sstables_map[meta["file_id"]] for meta in input_metas]
+
+        generated_files = self._compactor.compact(
+            input_sstables,
+            self._next_file_id,  # XXX: resolve concurrency with flush
+            self.sstable_size * target_level,  # XXX: naive heuristic
+        )
+
+        for meta in input_metas:
+            del self._sstables_map[meta["file_id"]]
+
+        generated_metas = []
+
+        # XXX: Implement a retry and raise on max retry
+        for sstable, meta in generated_files:
+            self._sstables_map[sstable.file_id] = sstable
+            generated_metas.append(meta)
+
+        # XXX: Lock the levels / map during this operation
+        self._file_picker.apply_compaction_result(
+            source_level,
+            target_level,
+            source_metas,
+            target_metas,
+            generated_metas,
+        )
+
+        self._next_file_id += len(generated_files)

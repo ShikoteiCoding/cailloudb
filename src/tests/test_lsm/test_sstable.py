@@ -20,6 +20,7 @@ from cailloudb.lsm.utils import extract_from_internal_key
 
 __all__ = [
     "test_sstable_get",
+    "test_sstable_get_missing_key_in_range",
     "test_sstable_iter",
     "test_sstable_scan_fixed_range",
     "test_sstable_scan_unbounded_range",
@@ -53,6 +54,17 @@ def test_sstable_get(memtable: MemTable):
     assert sstable.get(b"cherry", 3) == SSTableEntry(
         key=b"cherry", seq_num=3, value=TOMBSTONE
     )
+
+
+def test_sstable_get_missing_key_in_range(memtable: MemTable):
+    memtable.insert(key=b"apple", seq_num=1, value=b"red")
+    memtable.insert(key=b"cherry", seq_num=2, value=b"dark-red")
+
+    sstable, file_metadata = write_iterator_to_sstables(
+        memtable, 1, SSTABLE_MAX_FILE_SIZE
+    )[0]
+
+    assert sstable.get(b"banana", 2) is None
 
 
 def test_sstable_iter(memtable: MemTable):

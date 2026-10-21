@@ -80,4 +80,19 @@ def test_block_reader_get_non_existing_key():
     block_reader = BlockReader(block_data)
 
     assert block_reader.get(key, 0) == (value, 0, False)
+    assert block_reader.get(b"key2", 0) == (None, None, False)
     assert block_reader.get(b"key2", 1) == (None, None, False)
+
+
+def test_block_reader_get_non_existing_key_lower_than_block_min_key():
+    block_builder = BlockBuilder(1024)
+
+    key, value = b"key1", b"val1"
+    internal_key = build_internal_key(key, 0, False)
+    block_builder.add(internal_key, value)
+
+    block_data, _ = block_builder.finalize()
+    block_reader = BlockReader(block_data)
+
+    # This should hit the early-return optimization path when table_key > key.
+    assert block_reader.get(b"key0", 0) == (None, None, False)
