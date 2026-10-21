@@ -1,3 +1,4 @@
+import asyncio
 import heapq
 from pathlib import Path
 from typing import Iterator
@@ -57,12 +58,25 @@ class LSMTree:
     #: File picker instance
     _file_picker: FilePicker
 
+    #: Flush queue and task for SC on background flush
+    _flush_queue: asyncio.Queue[tuple[MemTable, int]]
+    _flush_task: asyncio.Task | None
+    _flush_enabled: bool
+
+    #: Compaction
+    _compaction_task: asyncio.Task | None
+    _compaction_enabled: bool
+    _compaction_interval_s: int
+
     def __init__(
         self,
         memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
         sstable_size: int = SSTABLE_MAX_FILE_SIZE,
         max_levels: int = SSTABLE_MAX_LEVELS,
         wal_path: Path | None = None,
+        flush_enabled: bool = True,
+        compaction_enabled: bool = True,
+        compaction_interval_s: int = 10,
     ):
         self.memtable_size = memtable_size
         self.sstable_size = sstable_size
@@ -76,6 +90,18 @@ class LSMTree:
         self._wal = Wal(wal_path) if wal_path is not None else None
         self._compactor = Compactor()
         self._file_picker = FilePicker(self._levels, self.max_levels)
+        self._flush_queue = asyncio.Queue()
+        self._flush_task = None
+        self._flush_enabled = flush_enabled
+        self._compaction_task = None
+        self._compaction_enabled = compaction_enabled
+        self._compaction_interval_s = compaction_interval_s
+
+        # XXX: Not pythonic, this should be moved to __aenter__
+        # So that proper lifecycle can be handled async
+        # (especially init / close)
+        self._start_flush_worker()
+        self._start_compactor_worker()
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -257,38 +283,57 @@ class LSMTree:
         """
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
+            self._flush_queue.put_nowait((self._memtable, self._next_file_id))
+
             self._memtable = MemTable(max_bytes_size=self.memtable_size)
+            self._next_file_id += 1
 
-            # XXX: remove blocking the hotpath with a sync flush
-            self._sync_flush()
-
-    def _sync_flush(self) -> None:
+    def _sync_flush(
+        self, memtable: MemTable, file_id: int
+    ) -> list[tuple[SSTable, FileMetaData]]:
         """
-        Synchronous in-process task to write immutable memtables to disk.
-
-        Flush proces is uniquely responsible for appending to the l0 level.
+        Synchronous in-process task to write one immutable memtable to disk (L0).
         """
-        if not self._immutable_memtables:
+
+        return write_iterator_to_sstables(
+            iterator=memtable.__iter__(),
+            start_file_id=file_id,
+            max_file_size=self.sstable_size,
+        )
+
+    def _start_flush_worker(self) -> None:
+        """
+        Start a flush task in a worker if not already running.
+        """
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.create_task(self._flush_worker())
+
+    async def _flush_worker(self) -> None:
+        if self._flush_queue is None:
             return
 
-        while self._immutable_memtables:
-            # XXX: Implement a retry and raise on max retry
-            memtable = self._immutable_memtables.pop(0)
-            generated_files = write_iterator_to_sstables(
-                iterator=memtable.__iter__(),
-                start_file_id=self._next_file_id,
-                max_file_size=self.sstable_size,
-            )
+        loop = asyncio.get_running_loop()
+        while True:
+            try:
+                memtable, file_id = await self._flush_queue.get()
 
-            for sstable, meta in generated_files:
-                self._sstables_map[sstable.file_id] = sstable
-                self._levels[0].append(meta)
+                # XXX: Handle retries and failures
+                generated_ssstables = await loop.run_in_executor(
+                    None, self._sync_flush, memtable, file_id
+                )
 
-            self._next_file_id += len(generated_files)
+                for sstable, file_metadata in generated_ssstables:
+                    self._sstables_map[file_metadata["file_id"]] = sstable
+                    self._levels[0].append(file_metadata)
+                    self._immutable_memtables.remove(memtable)
+
+                self._flush_queue.task_done()
+            except Exception as e:
+                pass
 
     def _sync_compact(self) -> None:
         """
-        Compaction of SSTables from L0 to Lmax.
+        Synchronous in-process compaction task of SSTables from L0 to Lmax.
 
         NOTE: This is for now a full compaction (not partial) because
         it acts on the entire level, not specific files.
@@ -337,3 +382,16 @@ class LSMTree:
         )
 
         self._next_file_id += len(generated_files)
+
+    def _start_compactor_worker(self) -> None:
+        if not self._compaction_enabled:
+            return
+
+        if self._compaction_task is None or self._compaction_task.done():
+            self._compaction_task = asyncio.create_task(self._compaction_worker())
+
+    async def _compaction_worker(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        while True:
+            await asyncio.sleep(self._compaction_interval_s)
