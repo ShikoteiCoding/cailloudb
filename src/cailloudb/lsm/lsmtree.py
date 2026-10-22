@@ -83,7 +83,7 @@ class LSMTree:
         """
         if self._wal is not None:
             await self._wal.append(key, seq_num, value)
-        await self._insert(key, seq_num, value)
+        self._insert(key, seq_num, value)
 
     async def delete(self, key: bytes, seq_num: int) -> None:
         """
@@ -91,7 +91,7 @@ class LSMTree:
         """
         if self._wal is not None:
             await self._wal.append(key, seq_num, b"")
-        await self._insert(key, seq_num, TOMBSTONE)
+        self._insert(key, seq_num, TOMBSTONE)
 
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
         """
@@ -104,7 +104,7 @@ class LSMTree:
             await self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
-            await self._insert(key, seq_num, value)
+            self._insert(key, seq_num, value)
             seq_num += 1
             applied += 1
         self._maybe_rotate_memtable()
