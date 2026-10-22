@@ -123,7 +123,7 @@ async def test_clear_drops_logged_records(tmp_path):
     sealed = wal._path
     assert sealed.name == "wal_000001.log"
 
-    await wal.clear()
+    wal.clear()
 
     assert wal._path.name == "wal_000002.log"
     assert sealed.read_bytes()
@@ -151,7 +151,7 @@ async def test_reopen_opens_a_new_file(tmp_path):
 async def test_append_after_clear(tmp_path):
     wal = Wal(tmp_path / "wal")
     await wal.append(b"a", 0, b"1")
-    await wal.clear()
+    wal.clear()
     await wal.append(b"b", 1, b"2")
 
     records = [record async for record in wal.recover()]

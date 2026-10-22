@@ -241,7 +241,7 @@ class Wal:
         for record in self.records():
             yield record
 
-    async def clear(self):
+    def clear(self):
         """ Birth new WAL file, logs stay on disk """
         # TODO: TTL and Size Limit, for point-in-time recovery
         # only archive for now
