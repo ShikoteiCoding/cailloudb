@@ -308,7 +308,7 @@ classDiagram
     _physical_records(data: bytes) Iterator[tuple[int, bytes]]
     _single_ops(body: bytes) Iterator[tuple[bytes, int, bytes]]
     append(key: bytes | WriteBatch, seq_num: int, value: bytes | None) None
-    clear()
+    roll()
     records() Iterator[tuple[bytes, int, bytes]]
     recover() AsyncIterator[tuple[bytes, int, bytes]]
   }
@@ -323,7 +323,7 @@ classDiagram
     _physical_records(data: bytes) Iterator[tuple[int, bytes]]
     _single_ops(body: bytes) Iterator[tuple[bytes, int, bytes]]
     append(key: bytes | WriteBatch, seq_num: int, value: bytes | None) None
-    clear()
+    roll()
     records() Iterator[tuple[bytes, int, bytes]]
     recover() AsyncIterator[tuple[bytes, int, bytes]]
   }

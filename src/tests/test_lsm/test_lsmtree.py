@@ -29,6 +29,7 @@ __all__ = [
     "test_lsmtree_scan_max_seq",
     "test_lsmtree_scan_iterator_agg_break",
     "test_lsmtree_scan_future_seq_continue",
+    "test_rotate_clears_wal_before_flush",
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_sync_compact_exits_when_picker_finds_no_level",
     "test_lsmtree_sync_compact_exits_when_picker_returns_no_files",
@@ -494,6 +495,20 @@ def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
 
     # The future_val should be skipped, yielding only past_val
     assert result == [(b"key1", b"past_val")]
+
+
+@pytest.mark.asyncio
+async def test_rotate_clears_wal_before_flush(tmp_path):
+    lsmtree = LSMTree(10, wal_path=tmp_path / "wal")
+
+    await lsmtree.put(b"key1", 0, b"val1")
+
+    sealed = tmp_path / "wal" / "wal_000001.log"
+    assert sealed.stat().st_size > 0
+    assert lsmtree._wal is not None
+    assert lsmtree._wal._path.name == "wal_000002.log"
+    assert lsmtree._wal._path.stat().st_size == 0
+    assert len(lsmtree._sstables_map) == 1
 
 
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
