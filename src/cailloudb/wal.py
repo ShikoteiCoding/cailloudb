@@ -40,7 +40,7 @@ class Wal:
     """
 
     # TODO: replace 4-byte key/value lengths with a cheaper encoding
-    # TODO: extend this header (for example a log number), same append/recover/clear
+    # TODO: extend this header (for example a log number), same append/recover/roll
 
     #: Active log number
     _number: int
@@ -241,7 +241,7 @@ class Wal:
         for record in self.records():
             yield record
 
-    def clear(self):
+    def roll(self):
         """ Birth new WAL file, logs stay on disk """
         # TODO: TTL and Size Limit, for point-in-time recovery
         # only archive for now
