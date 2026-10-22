@@ -16,6 +16,7 @@ __all__ = [
     "test_skiplist_scan_fixed_range",
     "test_skiplist_scan_unbounded_range",
     "test_skiplist_scan_max_seq",
+    "test_skiplist_as_dummy_iterator",
 ]
 
 
@@ -255,3 +256,11 @@ def test_skiplist_scan_max_seq(skiplist: SkipList):
         MemTableEntry(key=b"key1", seq_num=0, value=b"val1"),
         MemTableEntry(key=b"key2", seq_num=1, value=b"val2"),
     ]
+
+
+def test_skiplist_as_dummy_iterator():
+    skiplist = SkipList()
+    skiplist.insert(b"key1", 0, b"val1")
+
+    # XXX: dummy next function
+    assert next(skiplist) == None

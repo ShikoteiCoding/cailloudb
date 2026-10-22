@@ -1,12 +1,14 @@
-from cailloudb.constants import TOMBSTONE
+import pytest
+
+from cailloudb.constants import INTERNAL_KEY_LEN_METADATA, TOMBSTONE
 from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.memtable import MemTable
-from cailloudb.lsm.skiplist import LEN_SEQUENCE_NUM
 
 __all__ = [
     "test_memtable_insert_and_get",
     "test_memtable_insert_tombstone",
     "test_memtable_full",
+    "test_memtable_as_dummy_iterator",
 ]
 
 
@@ -15,7 +17,9 @@ def test_memtable_insert_and_get():
 
     memtable.insert(b"key1", 0, b"val1")
 
-    assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
+    assert (
+        memtable.bytes_size == len(b"key1") + len(b"val1") + INTERNAL_KEY_LEN_METADATA
+    )
     assert len(memtable) == 1
     assert memtable.get(b"key1", 0) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
@@ -28,7 +32,9 @@ def test_memtable_insert_tombstone():
 
     memtable.insert(b"key1", 0, b"val1")
 
-    assert memtable.bytes_size == len(b"key1") + len(b"val1") + LEN_SEQUENCE_NUM
+    assert (
+        memtable.bytes_size == len(b"key1") + len(b"val1") + INTERNAL_KEY_LEN_METADATA
+    )
     assert len(memtable) == 1
     assert memtable.get(b"key1", 0) == MemTableEntry(
         key=b"key1", seq_num=0, value=b"val1"
@@ -39,10 +45,10 @@ def test_memtable_insert_tombstone():
     assert len(memtable) == 2
     assert memtable.bytes_size == (
         len(b"key1")
-        + LEN_SEQUENCE_NUM
+        + INTERNAL_KEY_LEN_METADATA
         + len(b"val1")
         + len(b"key1")
-        + LEN_SEQUENCE_NUM
+        + INTERNAL_KEY_LEN_METADATA
         + len(TOMBSTONE)
     )
     assert memtable.get(b"key1", 0) == MemTableEntry(
@@ -56,3 +62,11 @@ def test_memtable_full():
 
     memtable.insert(b"key1", 0, b"val1")
     assert memtable.is_full()
+
+
+def test_memtable_as_dummy_iterator():
+    memtable = MemTable(max_bytes_size=1)
+    memtable.insert(b"key1", 0, b"val1")
+
+    # XXX: dummy next function
+    assert next(memtable) == None
