@@ -508,7 +508,7 @@ async def test_rotate_clears_wal_before_flush(tmp_path):
     assert lsmtree._wal is not None
     assert lsmtree._wal._path.name == "wal_000002.log"
     assert lsmtree._wal._path.stat().st_size == 0
-    assert len(lsmtree.sstables) == 1
+    assert len(lsmtree._sstables_map) == 1
 
 
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):

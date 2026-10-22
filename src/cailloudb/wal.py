@@ -115,7 +115,7 @@ class Wal:
             if block_off == WAL_BLOCK_SIZE:
                 block_off = 0
 
-    async def append(
+    def append(
         self,
         key: bytes | WriteBatch,
         seq_num: int,

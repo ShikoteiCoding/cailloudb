@@ -52,7 +52,7 @@ async def test_recover_empty_wal(tmp_path):
 @pytest.mark.asyncio
 async def test_append_put_then_recover(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"1")
+    wal.append(b"a", 0, b"1")
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 0, b"1")]
@@ -61,7 +61,7 @@ async def test_append_put_then_recover(tmp_path):
 @pytest.mark.asyncio
 async def test_append_none_value_then_recover(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, None)
+    wal.append(b"a", 0, None)
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 0, b"")]
@@ -70,7 +70,7 @@ async def test_append_none_value_then_recover(tmp_path):
 @pytest.mark.asyncio
 async def test_append_delete_then_recover(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"")
+    wal.append(b"a", 0, b"")
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 0, b"")]
@@ -80,7 +80,7 @@ async def test_append_delete_then_recover(tmp_path):
 async def test_append_writes_length_prefixed_record(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"ab", 0, b"xyz")
+    wal.append(b"ab", 0, b"xyz")
 
     payload = (
         WAL_SEQ_STRUCT.pack(0)
@@ -102,10 +102,10 @@ async def test_append_writes_length_prefixed_record(tmp_path):
 @pytest.mark.asyncio
 async def test_append_preserves_order(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"1")
-    await wal.append(b"b", 1, b"2")
-    await wal.append(b"a", 2, b"")
-    await wal.append(b"c", 3, b"3")
+    wal.append(b"a", 0, b"1")
+    wal.append(b"b", 1, b"2")
+    wal.append(b"a", 2, b"")
+    wal.append(b"c", 3, b"3")
 
     records = [record async for record in wal.recover()]
     assert records == [
@@ -119,7 +119,7 @@ async def test_append_preserves_order(tmp_path):
 @pytest.mark.asyncio
 async def test_clear_drops_logged_records(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"1")
+    wal.append(b"a", 0, b"1")
     sealed = wal._path
     assert sealed.name == "wal_000001.log"
 
@@ -135,7 +135,7 @@ async def test_clear_drops_logged_records(tmp_path):
 async def test_reopen_opens_a_new_file(tmp_path):
     folder = tmp_path / "wal"
     wal = Wal(folder)
-    await wal.append(b"a", 0, b"1")
+    wal.append(b"a", 0, b"1")
     previous = wal._path
 
     reopened = Wal(folder)
@@ -150,9 +150,9 @@ async def test_reopen_opens_a_new_file(tmp_path):
 @pytest.mark.asyncio
 async def test_append_after_clear(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"1")
+    wal.append(b"a", 0, b"1")
     wal.clear()
-    await wal.append(b"b", 1, b"2")
+    wal.append(b"b", 1, b"2")
 
     records = [record async for record in wal.recover()]
     assert records == [(b"b", 1, b"2")]
@@ -218,7 +218,7 @@ async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
     batch.put(b"b", b"lyon")
     batch.put(b"c", b"paris")
     batch.sync_header(2)
-    await wal.append(batch, 2)
+    wal.append(batch, 2)
 
     records = [record async for record in wal.recover()]
     assert records == [
@@ -235,7 +235,7 @@ async def test_append_large_batch_fragments_across_blocks(tmp_path):
     for i in range(count):
         batch.put(i.to_bytes(4, "big"), b"v")
     batch.sync_header(1)
-    await wal.append(batch, 0)
+    wal.append(batch, 0)
 
     data = wal._path.read_bytes()
     block = WAL_BLOCK_SIZE
@@ -250,9 +250,9 @@ async def test_append_large_batch_fragments_across_blocks(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_replays_into_empty_store(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 0, b"1")
-    await wal.append(b"b", 1, b"2")
-    await wal.append(b"a", 2, b"")
+    wal.append(b"a", 0, b"1")
+    wal.append(b"b", 1, b"2")
+    wal.append(b"a", 2, b"")
 
     store = InMemoryStore(tmp_path / "wal")
     async for key, _, val in wal.recover():
@@ -269,8 +269,8 @@ async def test_recover_replays_into_empty_store(tmp_path):
 async def test_recover_returns_records_before_a_short_tail(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", 1, b"1")
-    await wal.append(b"b", 2, b"2")
+    wal.append(b"a", 1, b"1")
+    wal.append(b"b", 2, b"2")
 
     path = wal._path
     path.write_bytes(path.read_bytes()[:-8])
@@ -283,7 +283,7 @@ async def test_recover_returns_records_before_a_short_tail(tmp_path):
 async def test_recover_returns_records_before_a_partial_header(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", 1, b"1")
+    wal.append(b"a", 1, b"1")
 
     path = wal._path
     path.write_bytes(path.read_bytes() + b"\x01\x02\x03")
@@ -316,11 +316,11 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
 async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", 1, b"1")
+    wal.append(b"a", 1, b"1")
     log = wal._path
     middle = log.stat().st_size
-    await wal.append(b"b", 2, b"2")
-    await wal.append(b"c", 3, b"3")
+    wal.append(b"b", 2, b"2")
+    wal.append(b"c", 3, b"3")
 
     data = bytearray(log.read_bytes())
     data[middle] ^= 0xFF
@@ -334,10 +334,10 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
 async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
     wal = Wal(path)
-    await wal.append(b"a", 1, b"1")
+    wal.append(b"a", 1, b"1")
     log = wal._path
     last = log.stat().st_size
-    await wal.append(b"b", 2, b"2")
+    wal.append(b"b", 2, b"2")
 
     data = bytearray(log.read_bytes())
     data[last] ^= 0xFF
@@ -350,10 +350,10 @@ async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
 @pytest.mark.asyncio
 async def test_append_rejects_payload_longer_than_uint16(tmp_path):
     wal = Wal(tmp_path / "wal")
-    await wal.append(b"a", 1, b"1")
+    wal.append(b"a", 1, b"1")
 
     with pytest.raises(ValueError, match="wal single record exceeds block"):
-        await wal.append(b"k", 2, b"x" * 65519)
+        wal.append(b"k", 2, b"x" * 65519)
 
     records = [record async for record in wal.recover()]
     assert records == [(b"a", 1, b"1")]

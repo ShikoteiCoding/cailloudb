@@ -82,7 +82,7 @@ class LSMTree:
         Put a key-value pair into the currently active memtable.
         """
         if self._wal is not None:
-            await self._wal.append(key, seq_num, value)
+            self._wal.append(key, seq_num, value)
         self._insert(key, seq_num, value)
 
     async def delete(self, key: bytes, seq_num: int) -> None:
@@ -90,7 +90,7 @@ class LSMTree:
         Syntactic sugar to put a tombstone marker.
         """
         if self._wal is not None:
-            await self._wal.append(key, seq_num, b"")
+            self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
 
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
@@ -101,7 +101,7 @@ class LSMTree:
         """
         batch.sync_header(seq_num)
         if self._wal is not None:
-            await self._wal.append(batch, seq_num)
+            self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
             self._insert(key, seq_num, value)
