@@ -1,5 +1,5 @@
 import heapq
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from lsm.table_builder import write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
@@ -17,7 +17,7 @@ class Compactor:
     def compact(
         self,
         sstables_to_merge: list[SSTable],
-        next_file_id: int,
+        file_id_generator: Callable[[], int],
         level_sstable_size: int,
     ) -> list[tuple[SSTable, FileMetaData]]:
         """
@@ -28,7 +28,7 @@ class Compactor:
 
         return write_iterator_to_sstables(
             self._deduplicate_iterator(merged_iterators),
-            next_file_id,
+            file_id_generator,
             level_sstable_size,
             in_memory=True,
         )

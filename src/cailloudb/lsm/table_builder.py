@@ -1,6 +1,6 @@
 import io
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from constants import (
     INTERNAL_KEY_LEN_STRUCT,
@@ -16,7 +16,7 @@ from lsm.sstable import InMemorySSTable, SSTable
 
 def write_iterator_to_sstables(
     iterator: Iterator[tuple[bytes, bytes]],
-    start_file_id: int,
+    file_id_generator: Callable[[], int],
     max_file_size: int,
     in_memory: bool = True,
 ) -> list[tuple[SSTable, FileMetaData]]:
@@ -24,7 +24,7 @@ def write_iterator_to_sstables(
     Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
     """
     results = []
-    current_file_id = start_file_id
+    current_file_id = file_id_generator()
     builder = None
 
     for internal_key, value in iterator:
@@ -36,7 +36,7 @@ def write_iterator_to_sstables(
         # Split if full
         if builder.estimated_size() >= max_file_size:
             results.append(builder.finish())
-            current_file_id += 1
+            current_file_id = file_id_generator()
             builder = None
 
     # Flush the remaining

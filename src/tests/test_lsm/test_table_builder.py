@@ -193,7 +193,7 @@ def test_write_iterator_to_sstables_splits_when_builder_is_full():
 
     results = write_iterator_to_sstables(
         records,
-        start_file_id=10,
+        file_id_generator=10,
         max_file_size=1,  # Force small file size
         in_memory=True,
     )
