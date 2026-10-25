@@ -413,6 +413,35 @@ class LSMTree:
             )
             self._compaction_thread.start()
 
+    def _commit_compaction_result(
+        self,
+        result: tuple[
+            int,
+            int,
+            list[FileMetaData],
+            list[FileMetaData],
+            list[tuple[SSTable, FileMetaData]],
+        ],
+    ) -> None:
+        source_level, target_level, source_metas, target_metas, generated_files = result
+        if not generated_files:
+            return
+
+        generated_metas = []
+
+        with self._sst_lock:
+            for sstable, meta in generated_files:
+                self._sstables_map[sstable.file_id] = sstable
+                generated_metas.append(meta)
+
+            self._file_picker.apply_compaction_result(
+                source_level,
+                target_level,
+                source_metas,
+                target_metas,
+                generated_metas,
+            )
+
     def _compaction_worker(self) -> None:
         """
         Threaf-safe compaction worker loop.
@@ -425,25 +454,5 @@ class LSMTree:
         while True:
             time.sleep(self._compaction_interval_s)
 
-            source_level, target_level, source_metas, target_metas, generated_files = (
-                self._pick_and_compact()
-            )
-
-            if not generated_files:
-                continue
-
-            generated_metas = []
-
-            # XXX: Implement a retry and raise on max retry
-            with self._sst_lock:
-                for sstable, meta in generated_files:
-                    self._sstables_map[sstable.file_id] = sstable
-                    generated_metas.append(meta)
-
-                self._file_picker.apply_compaction_result(
-                    source_level,
-                    target_level,
-                    source_metas,
-                    target_metas,
-                    generated_metas,
-                )
+            # XXX: Apply retry and error handling
+            self._commit_compaction_result(self._pick_and_compact())

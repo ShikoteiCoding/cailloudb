@@ -3,6 +3,8 @@ test_lsmtree focuses on testing internals of the lsm as it acts
 as an orchestration layer between in-memory and disk storage.
 """
 
+import time
+
 import pytest
 
 from cailloudb.constants import TOMBSTONE
@@ -39,20 +41,35 @@ __all__ = [
 ]
 
 
+def _wait_for_background_flush(lsmtree: LSMTree, timeout_s: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        ):
+            return
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for flush worker to finish")
+
+
 @pytest.mark.asyncio
 async def test_lsmtree_internals_iteratively_0_record_memtable():
     lsmtree = LSMTree(10)  # should be full for each record
 
     await lsmtree.put(b"key1", 0, b"val1")
+    _wait_for_background_flush(lsmtree)
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 1
 
     await lsmtree.put(b"key2", 1, b"val2")
+    _wait_for_background_flush(lsmtree)
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 2
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
 
     await lsmtree.put(b"key3", 2, b"val3")
+    _wait_for_background_flush(lsmtree)
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 3
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
@@ -67,6 +84,7 @@ async def test_lsmtree_internals_iteratively_1_records_memtables():
     assert len(list(lsmtree._sstables_map.values())) == 0
 
     await lsmtree.put(b"key2", 1, b"val2")
+    _wait_for_background_flush(lsmtree)
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 1
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
@@ -131,6 +149,7 @@ async def test_lsmtree_get_from_sstable_because_of_spill():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
+    _wait_for_background_flush(lsmtree)
 
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
@@ -160,6 +179,7 @@ async def test_lsmtree_get_from_sstable_or_skiplist():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
+    _wait_for_background_flush(lsmtree)
 
     # Each insertion immediately fills the active skiplist
     # SSTable are then flushed
@@ -499,7 +519,7 @@ def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
     lsmtree = LSMTree()
 
-    lsmtree._sync_flush()
+    _wait_for_background_flush(lsmtree)
 
     assert len(list(lsmtree._sstables_map.values())) == 0
 
@@ -515,13 +535,14 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
+    _wait_for_background_flush(lsmtree)
 
     assert len(lsmtree._levels[0]) == 3
     old_level0_file_ids = [meta["file_id"] for meta in lsmtree._levels[0]]
     old_map_file_ids = sorted(lsmtree._sstables_map.keys())
     old_next_file_id = lsmtree._next_file_id
 
-    lsmtree._pick_and_compact()
+    lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
     assert [meta["file_id"] for meta in lsmtree._levels[0]] == old_level0_file_ids
     assert sorted(lsmtree._sstables_map.keys()) == old_map_file_ids
@@ -571,14 +592,16 @@ async def test_lsmtree_sync_compact_uses_picker_selected_files():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
+    _wait_for_background_flush(lsmtree)
+    old_level0_file_ids = {meta["file_id"] for meta in lsmtree._levels[0]}
 
-    lsmtree._pick_and_compact()
+    lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
     assert lsmtree._levels[0] == []
     assert len(lsmtree._levels[1]) == 4
-    assert set(meta["file_id"] for meta in lsmtree._levels[1]) == set(
-        lsmtree._sstables_map.keys()
-    )
+    new_level1_file_ids = {meta["file_id"] for meta in lsmtree._levels[1]}
+    assert old_level0_file_ids.isdisjoint(new_level1_file_ids)
+    assert new_level1_file_ids.issubset(set(lsmtree._sstables_map.keys()))
 
 
 def test_lsmtree_sync_compact_replaces_levels_and_map(
@@ -622,20 +645,22 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
 
     generated_sstable = MockSSTable(file_id=10)
 
-    def mock_compact(input_sstables, next_file_id, level_sstable_size):
-        assert input_sstables == [source_sstable, target_sstable]
-        assert next_file_id == 10
+    def mock_compact(sstables_to_merge, file_id_generator, level_sstable_size):
+        assert sstables_to_merge == [source_sstable, target_sstable]
+        assert file_id_generator() == 10
         assert level_sstable_size == lsmtree.sstable_size
         return [(generated_sstable, generated_meta)]
 
     monkeypatch.setattr(lsmtree._file_picker, "pick_compaction_level", lambda: 0)
     monkeypatch.setattr(lsmtree._compactor, "compact", mock_compact)
 
-    lsmtree._pick_and_compact()
+    lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
     assert lsmtree._levels[0] == []
     assert lsmtree._levels[1] == [generated_meta]
-    assert lsmtree._sstables_map == {10: generated_sstable}
+    assert lsmtree._sstables_map[10] == generated_sstable
+    assert lsmtree._sstables_map[1] == source_sstable
+    assert lsmtree._sstables_map[2] == target_sstable
     assert lsmtree._next_file_id == 11
 
 
@@ -650,13 +675,14 @@ async def test_lsmtree_sync_compact_then_scan():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
+    _wait_for_background_flush(lsmtree)
 
     assert len(lsmtree._levels[0]) == 4
     assert len(lsmtree._levels[1]) == 0
 
     old_level0_file_ids = {meta["file_id"] for meta in lsmtree._levels[0]}
 
-    lsmtree._pick_and_compact()
+    lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
     assert lsmtree._levels[0] == []
     assert len(lsmtree._levels[1]) == 4
@@ -664,7 +690,7 @@ async def test_lsmtree_sync_compact_then_scan():
     new_level1_file_ids = {meta["file_id"] for meta in lsmtree._levels[1]}
     assert old_level0_file_ids.isdisjoint(new_level1_file_ids)
 
-    assert new_level1_file_ids == set(lsmtree._sstables_map.keys())
+    assert new_level1_file_ids.issubset(set(lsmtree._sstables_map.keys()))
 
     assert list(lsmtree.scan(None, None, 2)) == [
         (b"key1", b"val1"),
@@ -684,11 +710,12 @@ async def test_lsmtree_sync_compact_then_get():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
+    _wait_for_background_flush(lsmtree)
 
     assert len(lsmtree._levels[0]) == 4
     assert len(lsmtree._levels[1]) == 0
 
-    lsmtree._pick_and_compact()
+    lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
     assert lsmtree._levels[0] == []
     assert len(lsmtree._levels[1]) == 4
