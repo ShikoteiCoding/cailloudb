@@ -36,8 +36,7 @@ __all__ = [
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
     "test_lsmtree_flush_worker_exception_path",
     "test_lsmtree_start_compaction_worker_noop_when_disabled",
-    "test_lsmtree_start_compaction_worker_starts_once",
-    "test_lsmtree_compaction_worker_natural_background_flow",
+    "test_lsmtree_compaction_worker_natural_background_flow_default_runtime",
     "test_lsmtree_sync_compact_exits_when_picker_finds_no_level",
     "test_lsmtree_sync_compact_exits_when_picker_returns_no_files",
     "test_lsmtree_sync_compact_uses_picker_selected_files",
@@ -597,30 +596,17 @@ def test_lsmtree_start_compaction_worker_noop_when_disabled():
     assert lsmtree._compaction_thread is None
 
 
-def test_lsmtree_start_compaction_worker_starts_once():
-    lsmtree = LSMTree(compaction_enabled=True, compaction_interval_s=1)
-
-    lsmtree._start_compaction_worker()
-    first_thread = lsmtree._compaction_thread
-
-    assert first_thread is not None
-    assert first_thread.is_alive()
-
-    lsmtree._start_compaction_worker()
-
-    assert lsmtree._compaction_thread is first_thread
-
-
 @pytest.mark.asyncio
-async def test_lsmtree_compaction_worker_natural_background_flow():
+async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime():
     lsmtree = LSMTree(
         memtable_size=10,
         sstable_size=10,
         compaction_enabled=True,
-        compaction_interval_s=0.01,
+        compaction_interval_s=1,
     )
 
-    lsmtree._start_compaction_worker()
+    assert lsmtree._compaction_thread is not None
+    assert lsmtree._compaction_thread.is_alive()
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")

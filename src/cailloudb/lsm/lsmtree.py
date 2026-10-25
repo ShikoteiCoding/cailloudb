@@ -117,7 +117,7 @@ class LSMTree:
         # So that proper lifecycle can be handled async
         # (especially init / close)
         self._start_flush_worker()
-        # self._start_compactor_worker()
+        self._start_compaction_worker()
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
