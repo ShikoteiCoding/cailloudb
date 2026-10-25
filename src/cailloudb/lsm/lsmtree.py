@@ -1,6 +1,9 @@
 import heapq
+import queue
+import threading
+import time
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from constants import (
     MEMTABLE_MAX_BYTES_SIZE,
@@ -57,12 +60,34 @@ class LSMTree:
     #: File picker instance
     _file_picker: FilePicker
 
+    #: Flush queue and task for SC on background flush
+    _flush_queue: queue.Queue[MemTable]
+    _flush_thread: threading.Thread | None
+    _flush_enabled: bool
+
+    #: Compaction
+    _compaction_enabled: bool
+    _compaction_thread: threading.Thread | None
+    _compaction_interval_s: int
+
+    #: File ID lock
+    _file_id_lock: threading.Lock
+
+    #: Lock for memory buffers
+    _mem_lock: threading.Lock
+
+    #: Lock for sstables
+    _sst_lock: threading.Lock
+
     def __init__(
         self,
         memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
         sstable_size: int = SSTABLE_MAX_FILE_SIZE,
         max_levels: int = SSTABLE_MAX_LEVELS,
         wal_path: Path | None = None,
+        flush_enabled: bool = True,
+        compaction_enabled: bool = True,
+        compaction_interval_s: int = 10,
     ):
         self.memtable_size = memtable_size
         self.sstable_size = sstable_size
@@ -76,6 +101,23 @@ class LSMTree:
         self._wal = Wal(wal_path) if wal_path is not None else None
         self._compactor = Compactor()
         self._file_picker = FilePicker(self._levels, self.max_levels)
+
+        self._flush_queue = queue.Queue()
+        self._flush_thread = None
+        self._flush_enabled = flush_enabled
+        self._compaction_thread = None
+        self._compaction_enabled = compaction_enabled
+        self._compaction_interval_s = compaction_interval_s
+
+        self._file_id_lock = threading.Lock()
+        self._mem_lock = threading.Lock()
+        self._sst_lock = threading.Lock()
+
+        # XXX: Not pythonic, this should be moved to __aenter__
+        # So that proper lifecycle can be handled async
+        # (especially init / close)
+        self._start_flush_worker()
+        self._start_compaction_worker()
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -259,40 +301,71 @@ class LSMTree:
         """
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
+            self._flush_queue.put(self._memtable)
             self._memtable = MemTable(max_bytes_size=self.memtable_size)
             if self._wal is not None:
                 self._wal.roll()
 
-            # XXX: remove blocking the hotpath with a sync flush
-            self._sync_flush()
-
-    def _sync_flush(self) -> None:
+    def file_id_generator(self) -> int:
         """
-        Synchronous in-process task to write immutable memtables to disk.
+        Thread-safe file ID Generator.
 
-        Flush proces is uniquely responsible for appending to the l0 level.
+        XXX: Should be moved to FileManager / VersionManager when introduced.
         """
-        if not self._immutable_memtables:
+        with self._file_id_lock:
+            file_id = self._next_file_id
+            self._next_file_id += 1
+            return file_id
+
+    def _start_flush_worker(self) -> None:
+        """
+        Start a flush task in a worker if not already running.
+        """
+        if self._flush_thread is None:
+            self._flush_thread = self._make_background_thread(self._flush_worker)
+            self._flush_thread.start()
+
+    def _make_background_thread(self, target: Callable) -> threading.Thread:
+        return threading.Thread(target=target, daemon=True)
+
+    def _flush_worker(self) -> None:
+        if self._flush_queue is None:
             return
 
-        while self._immutable_memtables:
-            # XXX: Implement a retry and raise on max retry
-            memtable = self._immutable_memtables.pop(0)
-            generated_files = write_iterator_to_sstables(
-                iterator=memtable.__iter__(),
-                start_file_id=self._next_file_id,
-                max_file_size=self.sstable_size,
-            )
+        while True:
+            try:
+                memtable = self._flush_queue.get()
 
-            for sstable, meta in generated_files:
-                self._sstables_map[sstable.file_id] = sstable
-                self._levels[0].append(meta)
+                # XXX: Handle retries and failures
+                generated_ssstables = write_iterator_to_sstables(
+                    iterator=memtable.__iter__(),
+                    file_id_generator=self.file_id_generator,
+                    max_file_size=self.sstable_size,
+                )
 
-            self._next_file_id += len(generated_files)
+                with self._sst_lock:
+                    for sstable, file_metadata in generated_ssstables:
+                        self._sstables_map[file_metadata["file_id"]] = sstable
+                        self._levels[0].append(file_metadata)
+                        with self._mem_lock:
+                            self._immutable_memtables.remove(memtable)
 
-    def _sync_compact(self) -> None:
+                self._flush_queue.task_done()
+            except Exception:
+                # XXX: Improve error handling
+                pass
+
+    def _pick_and_compact(
+        self,
+    ) -> tuple[
+        int,
+        int,
+        list[FileMetaData],
+        list[FileMetaData],
+        list[tuple[SSTable, FileMetaData]],
+    ]:
         """
-        Compaction of SSTables from L0 to Lmax.
+        Synchronous in-process compaction task of SSTables from L0 to Lmax.
 
         NOTE: This is for now a full compaction (not partial) because
         it acts on the entire level, not specific files.
@@ -301,43 +374,91 @@ class LSMTree:
             - Key ordering guarantee inside the SSTable
             - No Key range overlap accross SSTables
         """
-        source_level = self._file_picker.pick_compaction_level()
-        if source_level == -1:
-            return
+        with self._sst_lock:
+            source_level = self._file_picker.pick_compaction_level()
+            if source_level == -1:
+                return -1, -1, [], [], []
 
-        target_level = source_level + 1
-        source_metas, target_metas = self._file_picker.pick_compaction_files(
-            source_level, target_level
-        )
-        input_metas = source_metas + target_metas
-        if not input_metas:
-            return
+            target_level = source_level + 1
+            source_metas, target_metas = self._file_picker.pick_compaction_files(
+                source_level, target_level
+            )
+            input_metas = source_metas + target_metas
+            if not input_metas:
+                return -1, -1, [], [], []
+            input_sstables = [
+                self._sstables_map[meta["file_id"]] for meta in input_metas
+            ]
 
-        input_sstables = [self._sstables_map[meta["file_id"]] for meta in input_metas]
-
-        generated_files = self._compactor.compact(
-            input_sstables,
-            self._next_file_id,  # XXX: resolve concurrency with flush
-            self.sstable_size * target_level,  # XXX: naive heuristic
-        )
-
-        for meta in input_metas:
-            del self._sstables_map[meta["file_id"]]
-
-        generated_metas = []
-
-        # XXX: Implement a retry and raise on max retry
-        for sstable, meta in generated_files:
-            self._sstables_map[sstable.file_id] = sstable
-            generated_metas.append(meta)
-
-        # XXX: Lock the levels / map during this operation
-        self._file_picker.apply_compaction_result(
+        return (
             source_level,
             target_level,
             source_metas,
             target_metas,
-            generated_metas,
+            # This can safely be outside the lock as it is purely additive
+            self._compactor.compact(
+                sstables_to_merge=input_sstables,
+                file_id_generator=self.file_id_generator,  # XXX: resolve concurrency with flush
+                level_sstable_size=self.sstable_size
+                * target_level,  # XXX: naive heuristic
+            ),
         )
 
-        self._next_file_id += len(generated_files)
+    def _start_compaction_worker(self) -> None:
+        """
+        Start the compactor in a dedicated OS thread if enabled.
+        """
+        if not self._compaction_enabled:
+            return
+
+        if self._compaction_thread is None:
+            self._compaction_thread = self._make_background_thread(
+                self._compaction_worker
+            )
+            self._compaction_thread.start()
+
+    def _commit_compaction_result(
+        self,
+        result: tuple[
+            int,
+            int,
+            list[FileMetaData],
+            list[FileMetaData],
+            list[tuple[SSTable, FileMetaData]],
+        ],
+    ) -> None:
+        source_level, target_level, source_metas, target_metas, generated_files = result
+        if not generated_files:
+            return
+
+        generated_metas = []
+
+        with self._sst_lock:
+            for sstable, meta in generated_files:
+                self._sstables_map[sstable.file_id] = sstable
+                generated_metas.append(meta)
+
+            self._file_picker.apply_compaction_result(
+                source_level,
+                target_level,
+                source_metas,
+                target_metas,
+                generated_metas,
+            )
+
+    def _compaction_worker(self) -> None:
+        """
+        Threaf-safe compaction worker loop.
+
+        On schedule:
+            - Pick levels & files
+            - Compact
+            - Commit
+        """
+        while True:
+            time.sleep(self._compaction_interval_s)
+            self._compaction_tick()
+
+    def _compaction_tick(self) -> None:
+        # XXX: Apply retry and error handling
+        self._commit_compaction_result(self._pick_and_compact())

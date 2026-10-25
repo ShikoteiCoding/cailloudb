@@ -89,7 +89,9 @@ class FilePicker:
         old_target_files: list[FileMetaData],
         new_files: list[FileMetaData],
     ) -> None:
-        """Atomically swap out compacted files and insert new compacted files."""
+        """
+        Atomically swap out compacted files and insert new compacted files.
+        """
 
         # Remove compacted files from source & target
         self._levels[source_level] = [

@@ -242,7 +242,7 @@ class Wal:
             yield record
 
     def roll(self):
-        """ Birth new WAL file, logs stay on disk """
+        """Birth new WAL file, logs stay on disk"""
         # TODO: TTL and Size Limit, for point-in-time recovery
         # only archive for now
         self._number += 1
