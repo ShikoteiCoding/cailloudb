@@ -5,6 +5,7 @@ We keep forgetting what we want to do and we too lazy to maintain a tool for it 
 - Implement durable restart by replaying wal into the store
 - Use cheaper encoding for key / value length
 - Extend headers metadata (log number etc)
+- Introduce crash recovery
 - Implement last active snapshot guardrail during compaction
 - Drop tombstones (hard delete) on last level during compaction
 - Implement bloom filter

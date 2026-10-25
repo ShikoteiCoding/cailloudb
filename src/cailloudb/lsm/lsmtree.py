@@ -124,7 +124,7 @@ class LSMTree:
         Put a key-value pair into the currently active memtable.
         """
         if self._wal is not None:
-            await self._wal.append(key, seq_num, value)
+            self._wal.append(key, seq_num, value)
         self._insert(key, seq_num, value)
 
     async def delete(self, key: bytes, seq_num: int) -> None:
@@ -132,7 +132,7 @@ class LSMTree:
         Syntactic sugar to put a tombstone marker.
         """
         if self._wal is not None:
-            await self._wal.append(key, seq_num, b"")
+            self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
 
     async def write(self, batch: WriteBatch, seq_num: int) -> int:
@@ -143,7 +143,7 @@ class LSMTree:
         """
         batch.sync_header(seq_num)
         if self._wal is not None:
-            await self._wal.append(batch, seq_num)
+            self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
             self._insert(key, seq_num, value)
@@ -295,13 +295,16 @@ class LSMTree:
 
     def _maybe_rotate_memtable(self) -> None:
         """
-        Flush full memtable(s) to SSTable and create a new active memtable.
+        Flush full memtable(s) to SSTable, create a new active memtable and open the next WAL
+
+        The new log is born before flush so later writes cannot land in sealed file
         """
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
             self._flush_queue.put(self._memtable)
             self._memtable = MemTable(max_bytes_size=self.memtable_size)
-            self._next_file_id += 1
+            if self._wal is not None:
+                self._wal.roll()
 
     def file_id_generator(self) -> int:
         """
