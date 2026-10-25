@@ -66,8 +66,8 @@ class LSMTree:
     _flush_enabled: bool
 
     #: Compaction
-    # _compaction_task: asyncio.Task | None
     _compaction_enabled: bool
+    _compaction_thread: threading.Thread | None
     _compaction_interval_s: int
 
     #: File ID lock
@@ -105,7 +105,7 @@ class LSMTree:
         self._flush_queue = queue.Queue()
         self._flush_thread = None
         self._flush_enabled = flush_enabled
-        # self._compaction_task = None
+        self._compaction_thread = None
         self._compaction_enabled = compaction_enabled
         self._compaction_interval_s = compaction_interval_s
 
@@ -404,7 +404,7 @@ class LSMTree:
             ),
         )
 
-    def _start_compactor_worker(self) -> None:
+    def _start_compaction_worker(self) -> None:
         """
         Start the compactor in a dedicated OS thread if enabled.
         """

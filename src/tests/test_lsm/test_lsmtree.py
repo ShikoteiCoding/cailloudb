@@ -35,11 +35,9 @@ __all__ = [
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
     "test_lsmtree_flush_worker_exception_path",
-    "test_lsmtree_start_compactor_worker_noop_when_disabled",
-    "test_lsmtree_start_compactor_worker_starts_when_enabled",
-    "test_lsmtree_start_compactor_worker_noop_when_already_started",
-    "test_lsmtree_compaction_tick_runs_pick_then_commit",
-    "test_lsmtree_compaction_tick_propagates_pick_error",
+    "test_lsmtree_start_compaction_worker_noop_when_disabled",
+    "test_lsmtree_start_compaction_worker_starts_once",
+    "test_lsmtree_compaction_worker_natural_background_flow",
     "test_lsmtree_sync_compact_exits_when_picker_finds_no_level",
     "test_lsmtree_sync_compact_exits_when_picker_returns_no_files",
     "test_lsmtree_sync_compact_uses_picker_selected_files",
@@ -59,6 +57,15 @@ def _wait_for_background_flush(lsmtree: LSMTree, timeout_s: float = 2.0) -> None
             return
         time.sleep(0.01)
     raise AssertionError("Timed out waiting for flush worker to finish")
+
+
+def _wait_for_condition(predicate, timeout_s: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for condition")
 
 
 @pytest.mark.asyncio
@@ -529,6 +536,7 @@ async def test_rotate_clears_wal_before_flush(tmp_path):
     lsmtree = LSMTree(10, wal_path=tmp_path / "wal")
 
     await lsmtree.put(b"key1", 0, b"val1")
+    _wait_for_background_flush(lsmtree)
 
     sealed = tmp_path / "wal" / "wal_000001.log"
     assert sealed.stat().st_size > 0
@@ -581,126 +589,52 @@ def test_lsmtree_flush_worker_exception_path():
     assert stub_queue.calls == 2
 
 
-def test_lsmtree_start_compactor_worker_noop_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_lsmtree_start_compaction_worker_noop_when_disabled():
     lsmtree = LSMTree(compaction_enabled=False)
 
-    def _should_not_build_thread(_target):
-        raise AssertionError("Thread should not be created when compaction is disabled")
+    lsmtree._start_compaction_worker()
 
-    monkeypatch.setattr(lsmtree, "_make_background_thread", _should_not_build_thread)
-    lsmtree._compaction_thread = None  # type: ignore[attr-defined]
-
-    lsmtree._start_compactor_worker()
-
-    assert lsmtree._compaction_thread is None  # type: ignore[attr-defined]
+    assert lsmtree._compaction_thread is None
 
 
-def test_lsmtree_start_compactor_worker_starts_when_enabled(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    lsmtree = LSMTree(compaction_enabled=True)
+def test_lsmtree_start_compaction_worker_starts_once():
+    lsmtree = LSMTree(compaction_enabled=True, compaction_interval_s=1)
 
-    created_target = {"value": None}
+    lsmtree._start_compaction_worker()
+    first_thread = lsmtree._compaction_thread
 
-    class DummyThread:
-        def __init__(self):
-            self.started = False
+    assert first_thread is not None
+    assert first_thread.is_alive()
 
-        def start(self):
-            self.started = True
+    lsmtree._start_compaction_worker()
 
-    def fake_make_background_thread(target):
-        created_target["value"] = target
-        return DummyThread()
-
-    monkeypatch.setattr(lsmtree, "_make_background_thread", fake_make_background_thread)
-    lsmtree._compaction_thread = None  # type: ignore[attr-defined]
-
-    lsmtree._start_compactor_worker()
-
-    assert created_target["value"] == lsmtree._compaction_worker
-    assert lsmtree._compaction_thread is not None  # type: ignore[attr-defined]
-    assert lsmtree._compaction_thread.started is True  # type: ignore[attr-defined]
+    assert lsmtree._compaction_thread is first_thread
 
 
-def test_lsmtree_start_compactor_worker_noop_when_already_started(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    lsmtree = LSMTree(compaction_enabled=True)
-
-    class ExistingThread:
-        def __init__(self):
-            self.started = False
-
-        def start(self):
-            self.started = True
-
-    existing_thread = ExistingThread()
-    lsmtree._compaction_thread = existing_thread  # type: ignore[attr-defined]
-
-    def _should_not_build_thread(_target):
-        raise AssertionError("Thread should not be re-created when already started")
-
-    monkeypatch.setattr(lsmtree, "_make_background_thread", _should_not_build_thread)
-
-    lsmtree._start_compactor_worker()
-
-    assert lsmtree._compaction_thread is existing_thread  # type: ignore[attr-defined]
-    assert existing_thread.started is False
-
-
-def test_lsmtree_compaction_tick_runs_pick_then_commit(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    lsmtree = LSMTree(compaction_enabled=True)
-
-    expected_result = (1, 2, [], [], [])
-    commit_calls = {"count": 0}
-
-    def fake_pick_and_compact():
-        return expected_result
-
-    def fake_commit_compaction_result(result):
-        commit_calls["count"] += 1
-        assert result == expected_result
-
-    monkeypatch.setattr(lsmtree, "_pick_and_compact", fake_pick_and_compact)
-    monkeypatch.setattr(
-        lsmtree,
-        "_commit_compaction_result",
-        fake_commit_compaction_result,
+@pytest.mark.asyncio
+async def test_lsmtree_compaction_worker_natural_background_flow():
+    lsmtree = LSMTree(
+        memtable_size=10,
+        sstable_size=10,
+        compaction_enabled=True,
+        compaction_interval_s=0.01,
     )
 
-    lsmtree._compaction_tick()
+    lsmtree._start_compaction_worker()
 
-    assert commit_calls["count"] == 1
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key4", 3, b"val4")
 
+    _wait_for_background_flush(lsmtree)
 
-def test_lsmtree_compaction_tick_propagates_pick_error(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    lsmtree = LSMTree(compaction_enabled=True)
-    commit_calls = {"count": 0}
-
-    def fake_pick_and_compact():
-        raise RuntimeError("pick failed")
-
-    def fake_commit_compaction_result(_result):
-        commit_calls["count"] += 1
-
-    monkeypatch.setattr(lsmtree, "_pick_and_compact", fake_pick_and_compact)
-    monkeypatch.setattr(
-        lsmtree,
-        "_commit_compaction_result",
-        fake_commit_compaction_result,
+    _wait_for_condition(
+        lambda: len(lsmtree._levels[1]) == 4,
+        timeout_s=2.0,
     )
 
-    with pytest.raises(RuntimeError, match="pick failed"):
-        lsmtree._compaction_tick()
-
-    assert commit_calls["count"] == 0
+    assert len(lsmtree._levels[1]) == 4
 
 
 @pytest.mark.asyncio
