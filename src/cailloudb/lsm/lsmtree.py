@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from constants import (
     MEMTABLE_MAX_BYTES_SIZE,
@@ -319,10 +319,11 @@ class LSMTree:
         Start a flush task in a worker if not already running.
         """
         if self._flush_thread is None:
-            self._flush_thread = threading.Thread(
-                target=self._flush_worker, daemon=True
-            )
+            self._flush_thread = self._make_background_thread(self._flush_worker)
             self._flush_thread.start()
+
+    def _make_background_thread(self, target: Callable) -> threading.Thread:
+        return threading.Thread(target=target, daemon=True)
 
     def _flush_worker(self) -> None:
         if self._flush_queue is None:
@@ -408,8 +409,8 @@ class LSMTree:
             return
 
         if self._compaction_thread is None:
-            self._compaction_thread = threading.Thread(
-                target=self._compaction_worker, daemon=True
+            self._compaction_thread = self._make_background_thread(
+                self._compaction_worker
             )
             self._compaction_thread.start()
 
@@ -453,6 +454,8 @@ class LSMTree:
         """
         while True:
             time.sleep(self._compaction_interval_s)
+            self._compaction_tick()
 
-            # XXX: Apply retry and error handling
-            self._commit_compaction_result(self._pick_and_compact())
+    def _compaction_tick(self) -> None:
+        # XXX: Apply retry and error handling
+        self._commit_compaction_result(self._pick_and_compact())
