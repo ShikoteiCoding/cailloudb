@@ -46,18 +46,6 @@ __all__ = [
 ]
 
 
-def _wait_for_background_flush(lsmtree: LSMTree, timeout_s: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if (
-            lsmtree._flush_queue.unfinished_tasks == 0
-            and not lsmtree._immutable_memtables
-        ):
-            return
-        time.sleep(0.01)
-    raise AssertionError("Timed out waiting for flush worker to finish")
-
-
 def _wait_for_condition(predicate, timeout_s: float = 2.0) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -72,18 +60,33 @@ async def test_lsmtree_internals_iteratively_0_record_memtable():
     lsmtree = LSMTree(10)  # should be full for each record
 
     await lsmtree.put(b"key1", 0, b"val1")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 1
 
     await lsmtree.put(b"key2", 1, b"val2")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 2
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
 
     await lsmtree.put(b"key3", 2, b"val3")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 3
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
@@ -98,7 +101,12 @@ async def test_lsmtree_internals_iteratively_1_records_memtables():
     assert len(list(lsmtree._sstables_map.values())) == 0
 
     await lsmtree.put(b"key2", 1, b"val2")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._sstables_map.values())) == 1
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
@@ -163,7 +171,12 @@ async def test_lsmtree_get_from_sstable_because_of_spill():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
@@ -193,7 +206,12 @@ async def test_lsmtree_get_from_sstable_or_skiplist():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     # Each insertion immediately fills the active skiplist
     # SSTable are then flushed
@@ -535,7 +553,12 @@ async def test_rotate_clears_wal_before_flush(tmp_path):
     lsmtree = LSMTree(10, wal_path=tmp_path / "wal")
 
     await lsmtree.put(b"key1", 0, b"val1")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     sealed = tmp_path / "wal" / "wal_000001.log"
     assert sealed.stat().st_size > 0
@@ -548,7 +571,12 @@ async def test_rotate_clears_wal_before_flush(tmp_path):
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
     lsmtree = LSMTree()
 
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     assert len(list(lsmtree._sstables_map.values())) == 0
 
@@ -579,12 +607,11 @@ def test_lsmtree_flush_worker_exception_path():
             pass
 
     stub_queue = StubQueue()
-    lsmtree._flush_queue = stub_queue  # type: ignore[assignment]
+    lsmtree._flush_queue = stub_queue  # type: ignore
 
     with pytest.raises(KeyboardInterrupt):
         lsmtree._flush_worker()
 
-    # First get() exception is swallowed by flush worker, then loop retries.
     assert stub_queue.calls == 2
 
 
@@ -613,7 +640,12 @@ async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
 
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     _wait_for_condition(
         lambda: len(lsmtree._levels[1]) == 4,
@@ -634,7 +666,12 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level():
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     assert len(lsmtree._levels[0]) == 3
     old_level0_file_ids = [meta["file_id"] for meta in lsmtree._levels[0]]
@@ -691,7 +728,12 @@ async def test_lsmtree_sync_compact_uses_picker_selected_files():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
     old_level0_file_ids = {meta["file_id"] for meta in lsmtree._levels[0]}
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
@@ -774,7 +816,12 @@ async def test_lsmtree_sync_compact_then_scan():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     assert len(lsmtree._levels[0]) == 4
     assert len(lsmtree._levels[1]) == 0
@@ -809,7 +856,12 @@ async def test_lsmtree_sync_compact_then_get():
     await lsmtree.put(b"key2", 1, b"val2")
     await lsmtree.put(b"key3", 2, b"val3")
     await lsmtree.put(b"key4", 3, b"val4")
-    _wait_for_background_flush(lsmtree)
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
 
     assert len(lsmtree._levels[0]) == 4
     assert len(lsmtree._levels[1]) == 0
