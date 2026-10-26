@@ -15,6 +15,9 @@ class BaseStore(ABC):
     #: Sequence number for atomic write ops (put, del, merge)
     _seq: SeqNum
 
+    #: Runtime settings
+    settings: Settings
+
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
 
@@ -48,17 +51,13 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    #: Runtime settings
-    settings: Settings
-
     def __init__(
         self,
-        wal_path: Path | None = None,
-        settings: Settings | None = None,
+        wal_path: Path,
     ):
         super().__init__()
 
-        self.settings = settings or Settings()
+        self.settings = Settings()
         wal = self.settings.default_wal_dir if wal_path is None else wal_path
 
         self.__tree = LSMTree(

@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
 from dbreader import DbReader
-from settings import Settings
 from snapshot import DbSnapshot
 
 if TYPE_CHECKING:
+    from settings import Settings
     from store import BaseStore
     from write_batch import WriteBatch
 
@@ -16,9 +16,9 @@ class Db:
     #: Runtime settings
     settings: Settings
 
-    def __init__(self, store: BaseStore, settings: Settings | None = None):
+    def __init__(self, store: BaseStore, settings: Settings):
         self.store = store
-        self.settings = settings or Settings()
+        self.settings = settings
 
     def reader(self) -> DbReader:
         return DbReader(self.store)

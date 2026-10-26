@@ -167,7 +167,7 @@ async def test_store_put_and_delete_append_to_wal(tmp_path):
     await store.put(b"b", b"2")
     await store.delete(b"a")
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -184,7 +184,7 @@ async def test_store_write_appends_one_batch_record(tmp_path):
     batch.delete(b"a")
     await store.write(batch)
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -203,7 +203,7 @@ async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
     await store.write(batch)
     await store.put(b"c", b"3")
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),

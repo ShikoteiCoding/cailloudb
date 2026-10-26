@@ -1,6 +1,7 @@
 import pytest
+from conftest import TEST_DB
 
-from cailloudb import Db, InMemoryStore
+from cailloudb import Db, DbBuilder, InMemoryStore
 
 __all__ = [
     "test_dbreader_get",
@@ -14,7 +15,7 @@ __all__ = [
 @pytest.mark.asyncio
 async def test_dbreader_get(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
     await db.put(b"k", b"v")
@@ -26,7 +27,7 @@ async def test_dbreader_get(tmp_path):
 @pytest.mark.asyncio
 async def test_dbreader_scan(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
     await db.put(b"b", b"2")
@@ -43,7 +44,7 @@ async def test_dbreader_scan(tmp_path):
 @pytest.mark.asyncio
 async def test_dbreader_sees_db_writes(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
     assert await reader.get(b"k") is None
@@ -61,7 +62,7 @@ async def test_dbreader_sees_db_writes(tmp_path):
 @pytest.mark.asyncio
 async def test_dbreader_latest_sequence_number(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
     assert await reader.latest_sequence_number() == 0
@@ -75,7 +76,7 @@ async def test_dbreader_latest_sequence_number(tmp_path):
 @pytest.mark.asyncio
 async def test_db_reader_shares_store(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
 
     reader_a = db.reader()
     reader_b = db.reader()

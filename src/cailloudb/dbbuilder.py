@@ -21,11 +21,10 @@ class DbBuilder:
         self,
         name: str,
         store: BaseStore,
-        settings: Settings | None = None,
     ):
         self.name = name
         self.store = store
-        self.settings = settings or Settings()
+        self.settings = Settings()
 
     def build(self) -> Db:
-        return Db(self.store)
+        return Db(self.store, self.settings)

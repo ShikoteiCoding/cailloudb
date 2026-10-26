@@ -1,6 +1,7 @@
 import pytest
+from conftest import TEST_DB
 
-from cailloudb import Db, DbBuilder, InMemoryStore
+from cailloudb import DbBuilder, InMemoryStore
 
 __all__ = [
     "test_snapshot_get",
@@ -16,7 +17,7 @@ __all__ = [
 async def test_snapshot_get(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
 
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     await db.put(b"key1", b"val1")
 
     snap = db.snapshot()
@@ -33,7 +34,7 @@ async def test_snapshot_get(tmp_path):
 async def test_snapshot_delete_replay(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
 
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
     await db.put(b"k", b"v1")
 
     snap = db.snapshot()
@@ -49,7 +50,7 @@ async def test_snapshot_delete_replay(tmp_path):
 @pytest.mark.asyncio
 async def test_snapshot_reput(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"b", b"2")
 
@@ -66,7 +67,7 @@ async def test_snapshot_reput(tmp_path):
 @pytest.mark.asyncio
 async def test_snapshot_scan(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"a", b"1")
     await db.put(b"b", b"2")
@@ -99,7 +100,7 @@ async def test_dbbuilder_snapshot(tmp_path):
 @pytest.mark.asyncio
 async def test_scan_same_range_semantics_on_snapshot(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-    db = Db(store)
+    db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"b", b"2")
     await db.put(b"a", b"1")
