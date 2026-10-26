@@ -16,8 +16,8 @@ __all__ = [
 @pytest.mark.asyncio
 async def test_snapshot_get(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-
     db = DbBuilder(TEST_DB, store).build()
+    
     await db.put(b"key1", b"val1")
 
     snap = db.snapshot()
@@ -33,8 +33,8 @@ async def test_snapshot_get(tmp_path):
 @pytest.mark.asyncio
 async def test_snapshot_delete_replay(tmp_path):
     store = InMemoryStore(tmp_path / "wal")
-
     db = DbBuilder(TEST_DB, store).build()
+
     await db.put(b"k", b"v1")
 
     snap = db.snapshot()
