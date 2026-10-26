@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.constants import (
-    INTERNAL_KEY_LEN_STRUCT,
+from cailloudb.settings import (
+    STRUCT_INTERNAL_KEY_LEN,
     SSTABLE_FOOTER_STRUCT,
     SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
     SSTABLE_MAGIC_NUMBER,
@@ -119,7 +119,7 @@ def test_table_builder_finish_state_transition_and_file_layout():
     index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(footer)
 
     expected_index_size = (
-        INTERNAL_KEY_LEN_STRUCT.size
+        STRUCT_INTERNAL_KEY_LEN.size
         + len(key_2)
         + SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
     )

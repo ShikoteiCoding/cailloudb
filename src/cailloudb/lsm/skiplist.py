@@ -1,7 +1,7 @@
 import random
 from typing import Iterator
 
-from constants import (
+from settings import (
     INTERNAL_KEY_LEN_METADATA,
     INTERNAL_KEY_MAX_SEQ_NUM,
     TOMBSTONE,

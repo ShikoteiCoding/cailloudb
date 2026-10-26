@@ -5,10 +5,8 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator
 
-from constants import (
-    MEMTABLE_MAX_BYTES_SIZE,
-    SSTABLE_MAX_FILE_SIZE,
-    SSTABLE_MAX_LEVELS,
+from settings import (
+    Settings,
     TOMBSTONE,
 )
 from custom_types import MemTableEntry, SSTableEntry
@@ -79,16 +77,35 @@ class LSMTree:
     #: Lock for sstables
     _sst_lock: threading.Lock
 
+    #: Runtime settings
+    _settings: Settings
+
     def __init__(
         self,
-        memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
-        sstable_size: int = SSTABLE_MAX_FILE_SIZE,
-        max_levels: int = SSTABLE_MAX_LEVELS,
+        memtable_size: int | None = None,
+        sstable_size: int | None = None,
+        max_levels: int | None = None,
         wal_path: Path | None = None,
         flush_enabled: bool = True,
         compaction_enabled: bool = True,
         compaction_interval_s: int = 10,
+        settings: Settings | None = None,
     ):
+        self._settings = settings or Settings()
+        memtable_size = (
+            self._settings.memtable_max_bytes_size
+            if memtable_size is None
+            else memtable_size
+        )
+        sstable_size = (
+            self._settings.sstable_max_file_size
+            if sstable_size is None
+            else sstable_size
+        )
+        max_levels = (
+            self._settings.sstable_max_levels if max_levels is None else max_levels
+        )
+
         self.memtable_size = memtable_size
         self.sstable_size = sstable_size
         self.max_levels = max_levels
@@ -98,9 +115,19 @@ class LSMTree:
         self._sstables_map = {}
         self._levels = [[] for _ in range(max_levels)]
         self._next_file_id = 1
-        self._wal = Wal(wal_path) if wal_path is not None else None
+        self._wal = (
+            Wal(wal_path, wal_block_size=self._settings.wal_block_size)
+            if wal_path is not None
+            else None
+        )
         self._compactor = Compactor()
-        self._file_picker = FilePicker(self._levels, self.max_levels)
+        self._file_picker = FilePicker(
+            self._levels,
+            self.max_levels,
+            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
+            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
+            sstable_level_multiplier=self._settings.sstable_level_multiplier,
+        )
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None

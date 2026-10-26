@@ -1,8 +1,8 @@
 from typing import Literal
 
-from constants import (
+from settings import (
     INTERNAL_KEY_MAX_SEQ_NUM,
-    INTERNAL_KEY_METADATA_STRUCT,
+    STRUCT_INTERNAL_KEY_METADATA,
     INTERNAL_KEY_VALUE_TYPE_DELETE,
     INTERNAL_KEY_VALUE_TYPE_PUT,
 )
@@ -38,12 +38,12 @@ def extract_from_internal_key(
 
     ValueType: PUT or DELETE
     """
-    table_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
+    table_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
     # Unpack metadata to get sequence number and value type
-    metadata_bytes = internal_key[-INTERNAL_KEY_METADATA_STRUCT.size :]
-    key_metadata = INTERNAL_KEY_METADATA_STRUCT.unpack(metadata_bytes)[0]
+    metadata_bytes = internal_key[-STRUCT_INTERNAL_KEY_METADATA.size :]
+    key_metadata = STRUCT_INTERNAL_KEY_METADATA.unpack(metadata_bytes)[0]
 
-    inverted_seq = key_metadata >> INTERNAL_KEY_METADATA_STRUCT.size
+    inverted_seq = key_metadata >> STRUCT_INTERNAL_KEY_METADATA.size
     table_seq_num = INTERNAL_KEY_MAX_SEQ_NUM - inverted_seq
     value_type = key_metadata & 0xFF
 

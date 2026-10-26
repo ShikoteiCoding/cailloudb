@@ -2,17 +2,17 @@ import zlib
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
-from constants import (
+from settings import (
+    Settings,
     WAL_BATCH_KIND_FIRST,
     WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
-    WAL_BLOCK_SIZE,
-    WAL_CRC_STRUCT,
+    STRUCT_WAL_CRC,
     WAL_HEADER_SIZE,
-    WAL_LEN_STRUCT,
-    WAL_PAYLOAD_LEN_STRUCT,
-    WAL_SEQ_STRUCT,
+    STRUCT_WAL_LEN,
+    STRUCT_WAL_PAYLOAD_LEN,
+    STRUCT_WAL_SEQ,
     WAL_SINGLE_KIND,
 )
 from write_batch import TOMBSTONE, WriteBatch
@@ -48,7 +48,21 @@ class Wal:
     #: Active log file path
     _path: Path
 
-    def __init__(self, path: Path):
+    #: Effective WAL block size
+    _wal_block_size: int
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        wal_block_size: int,
+    ):
+        self._wal_block_size = wal_block_size
+
+        # XXX: move to settings check
+        if self._wal_block_size <= WAL_HEADER_SIZE:
+            raise ValueError("`wal_block_size` must be greater than WAL_HEADER_SIZE")
+
         # create folder on disk
         path.mkdir(parents=True, exist_ok=True)
         self._number = self._existing_number(path) + 1
@@ -67,8 +81,8 @@ class Wal:
     def _build_physical_record(self, kind: int, payload: bytes) -> bytes:
         checksum = zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF
         return (
-            WAL_CRC_STRUCT.pack(checksum)
-            + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+            STRUCT_WAL_CRC.pack(checksum)
+            + STRUCT_WAL_PAYLOAD_LEN.pack(len(payload))
             + bytes([kind])
             + payload
         )
@@ -77,27 +91,27 @@ class Wal:
         """Zero the rest of the block when a header plus one payload byte will not fit"""
         if block_off == 0:
             return 0
-        leftover = WAL_BLOCK_SIZE - block_off
+        leftover = self._wal_block_size - block_off
         if leftover <= WAL_HEADER_SIZE:
             f.write(b"\x00" * leftover)
             return 0
         return block_off
 
     def _append_single(self, f, body: bytes) -> None:
-        block_off = self._padding_short_tail(f, f.tell() % WAL_BLOCK_SIZE)
-        leftover = WAL_BLOCK_SIZE - block_off
+        block_off = self._padding_short_tail(f, f.tell() % self._wal_block_size)
+        leftover = self._wal_block_size - block_off
         if len(body) > leftover - WAL_HEADER_SIZE and block_off:
             f.write(b"\x00" * leftover)
         f.write(self._build_physical_record(WAL_SINGLE_KIND, body))
 
     def _append_batch(self, f, body: bytes) -> None:
-        block_off = f.tell() % WAL_BLOCK_SIZE
+        block_off = f.tell() % self._wal_block_size
         pos = 0
         n = len(body)
         started = False
         while pos < n:
             block_off = self._padding_short_tail(f, block_off)
-            available = WAL_BLOCK_SIZE - block_off - WAL_HEADER_SIZE
+            available = self._wal_block_size - block_off - WAL_HEADER_SIZE
             take = min(n - pos, available)
             finishes = pos + take == n
             if not started and finishes:
@@ -112,7 +126,7 @@ class Wal:
             pos += take
             started = True
             block_off += WAL_HEADER_SIZE + take
-            if block_off == WAL_BLOCK_SIZE:
+            if block_off == self._wal_block_size:
                 block_off = 0
 
     def append(
@@ -128,13 +142,13 @@ class Wal:
             if value is None:
                 value = b""
             body = (
-                WAL_SEQ_STRUCT.pack(seq_num)
-                + WAL_LEN_STRUCT.pack(len(key))
-                + WAL_LEN_STRUCT.pack(len(value))
+                STRUCT_WAL_SEQ.pack(seq_num)
+                + STRUCT_WAL_LEN.pack(len(key))
+                + STRUCT_WAL_LEN.pack(len(value))
                 + key
                 + value
             )
-            if WAL_HEADER_SIZE + len(body) > WAL_BLOCK_SIZE:
+            if WAL_HEADER_SIZE + len(body) > self._wal_block_size:
                 raise ValueError("wal single record exceeds block")
             is_batch = False
 
@@ -150,7 +164,7 @@ class Wal:
         offset = 0
         n = len(data)
         while offset < n:
-            leftover = WAL_BLOCK_SIZE - (offset % WAL_BLOCK_SIZE)
+            leftover = self._wal_block_size - (offset % self._wal_block_size)
             # A short tail stops after the last good record, only one record is missed, acceptable
             if leftover < WAL_HEADER_SIZE:
                 if offset + leftover < n:
@@ -163,8 +177,8 @@ class Wal:
                 offset += leftover
                 continue
 
-            (checksum,) = WAL_CRC_STRUCT.unpack_from(data, offset)
-            (payload_len,) = WAL_PAYLOAD_LEN_STRUCT.unpack_from(data, offset + 4)
+            (checksum,) = STRUCT_WAL_CRC.unpack_from(data, offset)
+            (payload_len,) = STRUCT_WAL_PAYLOAD_LEN.unpack_from(data, offset + 4)
             frame_end = offset + WAL_HEADER_SIZE + payload_len
             # Part of this frame is past the end of the file, so this record is missed
             if frame_end > n:
@@ -185,11 +199,11 @@ class Wal:
 
     # TODO : add TOMBSTONE here later
     def _single_ops(self, body: bytes) -> Iterator[tuple[bytes, int, bytes]]:
-        (seq_num,) = WAL_SEQ_STRUCT.unpack_from(body, 0)
+        (seq_num,) = STRUCT_WAL_SEQ.unpack_from(body, 0)
         inner = 8
-        (key_len,) = WAL_LEN_STRUCT.unpack_from(body, inner)
+        (key_len,) = STRUCT_WAL_LEN.unpack_from(body, inner)
         inner += 4
-        (val_len,) = WAL_LEN_STRUCT.unpack_from(body, inner)
+        (val_len,) = STRUCT_WAL_LEN.unpack_from(body, inner)
         inner += 4
         key = bytes(body[inner : inner + key_len])
         inner += key_len

@@ -3,9 +3,9 @@ import io
 from pathlib import Path
 from typing import Iterator
 
-from constants import (
-    INTERNAL_KEY_LEN_STRUCT,
-    INTERNAL_KEY_METADATA_STRUCT,
+from settings import (
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
     INTERNAL_KEY_VALUE_TYPE_DELETE,
     SSTABLE_FOOTER_STRUCT,
     SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
@@ -63,8 +63,8 @@ class SSTable:
         cursor = 0
         while cursor < index_size:
             # Read internal key length
-            key_len = INTERNAL_KEY_LEN_STRUCT.unpack_from(index_bytes, cursor)[0]
-            cursor += INTERNAL_KEY_LEN_STRUCT.size
+            key_len = STRUCT_INTERNAL_KEY_LEN.unpack_from(index_bytes, cursor)[0]
+            cursor += STRUCT_INTERNAL_KEY_LEN.size
 
             # Read the actual key
             last_key = index_bytes[cursor : cursor + key_len]
@@ -142,7 +142,7 @@ class SSTable:
             start_block_idx = 0
         else:
             target_internal_key = start_key + (
-                b"\x00" * INTERNAL_KEY_METADATA_STRUCT.size
+                b"\x00" * STRUCT_INTERNAL_KEY_METADATA.size
             )
             start_block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
 
@@ -156,7 +156,7 @@ class SSTable:
             block_reader = BlockReader(block_data)
 
             for table_internal_key, table_value in block_reader:
-                table_key = table_internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
+                table_key = table_internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
 
                 # Continue if start_key is greater
                 if start_key is not None and table_key < start_key:

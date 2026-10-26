@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from cailloudb.constants import TOMBSTONE
+from cailloudb.settings import TOMBSTONE
 from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.lsmtree import LSMTree
 from cailloudb.lsm.memtable import MemTable

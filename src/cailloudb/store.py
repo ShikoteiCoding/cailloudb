@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
-from constants import DEFAULT_WAL
+from settings import Settings
 from custom_types import SeqNum
 from lsm.lsmtree import LSMTree
 
@@ -48,10 +48,25 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    def __init__(self, wal_path: Path = DEFAULT_WAL):
+    #: Runtime settings
+    settings: Settings
+
+    def __init__(
+        self,
+        wal_path: Path | None = None,
+        settings: Settings | None = None,
+    ):
         super().__init__()
 
-        self.__tree = LSMTree(wal_path=wal_path)
+        self.settings = settings or Settings()
+        wal = self.settings.default_wal_dir if wal_path is None else wal_path
+
+        self.__tree = LSMTree(
+            wal_path=wal,
+            memtable_size=self.settings.memtable_max_bytes_size,
+            sstable_size=self.settings.sstable_max_file_size,
+            max_levels=self.settings.sstable_max_levels,
+        )
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes | None:

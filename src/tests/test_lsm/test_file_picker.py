@@ -1,4 +1,4 @@
-from cailloudb.constants import SSTABLE_L1_MAX_BYTES
+from cailloudb.settings import SSTABLE_L1_MAX_BYTES
 from cailloudb.lsm.filepicker import FilePicker
 
 __all__ = [

@@ -3,7 +3,7 @@ import zlib
 import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
-from cailloudb.constants import (
+from cailloudb.settings import (
     WAL_BATCH_KIND_FIRST,
     WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,

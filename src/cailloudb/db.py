@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
+from settings import Settings
 from dbreader import DbReader
 from snapshot import DbSnapshot
 
@@ -12,8 +13,12 @@ class Db:
     #: Actual KV Store
     store: BaseStore
 
-    def __init__(self, store: BaseStore):
+    #: Runtime settings
+    settings: Settings
+
+    def __init__(self, store: BaseStore, settings: Settings | None = None):
         self.store = store
+        self.settings = settings or Settings()
 
     def reader(self) -> DbReader:
         return DbReader(self.store)

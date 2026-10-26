@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.constants import (
+from cailloudb.settings import (
     SSTABLE_FOOTER_STRUCT,
     SSTABLE_MAGIC_NUMBER,
     SSTABLE_MAX_FILE_SIZE,
