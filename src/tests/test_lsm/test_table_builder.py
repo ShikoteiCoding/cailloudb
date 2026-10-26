@@ -3,14 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.settings import (
-    STRUCT_INTERNAL_KEY_LEN,
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-    SSTABLE_MAX_FILE_SIZE,
-    TOMBSTONE,
-)
 from cailloudb.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
@@ -19,6 +11,14 @@ from cailloudb.lsm.sstable import (
 )
 from cailloudb.lsm.table_builder import TableBuilder, write_iterator_to_sstables
 from cailloudb.lsm.utils import build_internal_key
+from cailloudb.settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_SSTABLE_FOOTER,
+    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
+    TOMBSTONE,
+    Settings,
+)
 
 __all__ = [
     "test_write_iterator_to_sstables_write_returns",
@@ -26,10 +26,12 @@ __all__ = [
     "test_write_iterator_to_sstables_to_disk",
 ]
 
+SSTABLE_MAX_FILE_SIZE = Settings().sstable_max_file_size
+
 
 @pytest.fixture
 def memtable() -> MemTable:
-    return MemTable()
+    return MemTable(Settings().memtable_max_bytes_size)
 
 
 @pytest.fixture
@@ -115,13 +117,11 @@ def test_table_builder_finish_state_transition_and_file_layout():
     assert meta["file_size"] == len(sstable.file.getvalue())
 
     file_bytes = sstable.file.getvalue()
-    footer = file_bytes[-SSTABLE_FOOTER_STRUCT.size :]
-    index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(footer)
+    footer = file_bytes[-STRUCT_SSTABLE_FOOTER.size :]
+    index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(footer)
 
     expected_index_size = (
-        STRUCT_INTERNAL_KEY_LEN.size
-        + len(key_2)
-        + SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
+        STRUCT_INTERNAL_KEY_LEN.size + len(key_2) + STRUCT_SSTABLE_INDEX_OFFSET_LEN.size
     )
     assert index_offset == table_builder.current_offset
     assert index_size == expected_index_size
@@ -138,7 +138,7 @@ def test_table_builder_finish_state_transition_and_file_layout():
 def test_write_iterator_to_sstables_write_returns(
     in_memory: bool, expected_cls: type[SSTable]
 ):
-    memtable = MemTable()
+    memtable = MemTable(Settings().sstable_max_file_size)
     memtable.insert(key=b"carrot", seq_num=1, value=b"orange")
     memtable.insert(key=b"banana", seq_num=2, value=TOMBSTONE)
     memtable.insert(key=b"apple", seq_num=3, value=b"red")

@@ -2,16 +2,16 @@ import io
 from pathlib import Path
 from typing import Callable, Iterator
 
-from settings import (
-    Settings,
-    STRUCT_INTERNAL_KEY_LEN,
-    STRUCT_SSTABLE_FOOTER,
-    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
-    SSTABLE_MAGIC_NUMBER,
-)
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
 from lsm.sstable import InMemorySSTable, SSTable
+from settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_SSTABLE_FOOTER,
+    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
+    Settings,
+)
 
 
 def write_iterator_to_sstables(
@@ -125,7 +125,9 @@ class TableBuilder:
         for last_key, block_offset, block_len in self.index_entries:
             self.out.write(STRUCT_INTERNAL_KEY_LEN.pack(len(last_key)))
             self.out.write(last_key)
-            self.out.write(STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len))
+            self.out.write(
+                STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
+            )
         index_size = self.out.tell() - index_offset
 
         # Write footer

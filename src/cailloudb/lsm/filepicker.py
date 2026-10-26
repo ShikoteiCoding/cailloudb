@@ -1,5 +1,5 @@
-from settings import Settings
 from custom_types import FileMetaData
+from settings import Settings
 
 
 class FilePicker:

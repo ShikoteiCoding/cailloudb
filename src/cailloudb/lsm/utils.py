@@ -2,9 +2,9 @@ from typing import Literal
 
 from settings import (
     INTERNAL_KEY_MAX_SEQ_NUM,
-    STRUCT_INTERNAL_KEY_METADATA,
     INTERNAL_KEY_VALUE_TYPE_DELETE,
     INTERNAL_KEY_VALUE_TYPE_PUT,
+    STRUCT_INTERNAL_KEY_METADATA,
 )
 
 

@@ -5,10 +5,6 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator
 
-from settings import (
-    Settings,
-    TOMBSTONE,
-)
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.compactor import Compactor
 from lsm.filepicker import FilePicker
@@ -16,6 +12,10 @@ from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
+from settings import (
+    TOMBSTONE,
+    Settings,
+)
 from wal import Wal
 from write_batch import WriteBatch
 

@@ -3,20 +3,20 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.settings import (
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-    SSTABLE_MAX_FILE_SIZE,
-    TOMBSTONE,
-)
 from cailloudb.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
     InMemorySSTable,
     SSTable,
 )
-from cailloudb.lsm.table_builder import TableBuilder, write_iterator_to_sstables
+from cailloudb.lsm.table_builder import write_iterator_to_sstables
 from cailloudb.lsm.utils import extract_from_internal_key
+from cailloudb.settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_SSTABLE_FOOTER,
+    TOMBSTONE,
+    Settings,
+)
 
 __all__ = [
     "test_sstable_get",
@@ -28,10 +28,12 @@ __all__ = [
     "test_sstable_scan_all_occurence_of_a_key",
 ]
 
+SSTABLE_MAX_FILE_SIZE = Settings().sstable_max_file_size
+
 
 @pytest.fixture
 def memtable() -> MemTable:
-    return MemTable()
+    return MemTable(Settings().memtable_max_bytes_size)
 
 
 def _fixed_file_id_generator(file_id: int):
@@ -217,8 +219,8 @@ def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     )[0]
     valid_bytes = valid_sstable.file.getvalue()
 
-    index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(
-        valid_bytes[-SSTABLE_FOOTER_STRUCT.size :]
+    index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(
+        valid_bytes[-STRUCT_SSTABLE_FOOTER.size :]
     )
     assert magic == SSTABLE_MAGIC_NUMBER
 
@@ -227,8 +229,8 @@ def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     assert reloaded_sstable.index_meta == valid_sstable.index_meta
 
     invalid_magic = (SSTABLE_MAGIC_NUMBER + 1) & 0xFFFFFFFF
-    invalid_footer = SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, invalid_magic)
-    invalid_bytes = valid_bytes[: -SSTABLE_FOOTER_STRUCT.size] + invalid_footer
+    invalid_footer = STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, invalid_magic)
+    invalid_bytes = valid_bytes[: -STRUCT_SSTABLE_FOOTER.size] + invalid_footer
 
     with pytest.raises(ValueError, match="Invalid magic number"):
         SSTable(1, io.BytesIO(invalid_bytes), Path("invalid_magic.sst"))

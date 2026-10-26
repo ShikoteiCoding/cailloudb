@@ -1,13 +1,13 @@
 import io
 from typing import Iterator
 
+from lsm.utils import extract_from_internal_key
 from settings import (
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
     STRUCT_INTERNAL_KEY_LEN,
     STRUCT_INTERNAL_KEY_METADATA,
-    INTERNAL_KEY_VALUE_TYPE_DELETE,
     STRUCT_SSTABLE_BLOCK_VALUE_LEN,
 )
-from lsm.utils import extract_from_internal_key
 
 
 class BlockBuilder:

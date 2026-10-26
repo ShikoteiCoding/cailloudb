@@ -1,5 +1,5 @@
-from cailloudb.settings import SSTABLE_L1_MAX_BYTES
 from cailloudb.lsm.filepicker import FilePicker
+from cailloudb.settings import Settings
 
 __all__ = [
     "test_file_picker_pick_compaction_level_returns_minus_one_when_max_levels_is_lt_2",
@@ -12,6 +12,8 @@ __all__ = [
     "test_file_picker_pick_compaction_files_non_l0_selects_overlapping_targets",
     "test_file_picker_pick_compaction_level_and_files_for_l0",
 ]
+
+SSTABLE_L1_MAX_BYTES = Settings().sstable_l1_max_bytes
 
 
 def test_file_picker_pick_compaction_level_returns_minus_one_when_max_levels_is_lt_2():

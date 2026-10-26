@@ -1,6 +1,5 @@
 from typing import Iterator
 
-from settings import MEMTABLE_MAX_BYTES_SIZE, Settings
 from custom_types import MemTableEntry
 from lsm.skiplist import SkipList
 
@@ -20,17 +19,10 @@ class MemTable(Iterator):
 
     def __init__(
         self,
-        max_bytes_size: int | None = None,
-        settings: Settings | None = None,
+        max_bytes_size: int,
     ):
-        if max_bytes_size is not None:
-            configured_max_bytes_size = max_bytes_size
-        elif settings is not None:
-            configured_max_bytes_size = settings.memtable_max_bytes_size
-        else:
-            configured_max_bytes_size = MEMTABLE_MAX_BYTES_SIZE
         self.skiplist = SkipList()
-        self.max_bytes_size = configured_max_bytes_size
+        self.max_bytes_size = max_bytes_size
 
     def insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """

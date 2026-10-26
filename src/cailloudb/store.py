@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
-from settings import Settings
 from custom_types import SeqNum
 from lsm.lsmtree import LSMTree
+from settings import Settings
 
 if TYPE_CHECKING:
     from pathlib import Path

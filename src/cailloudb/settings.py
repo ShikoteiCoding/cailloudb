@@ -30,19 +30,20 @@ STRUCT_SSTABLE_BLOCK_VALUE_LEN = struct.Struct("<I")
 
 TOMBSTONE = b"__INTERNAL_TOMBSTONE_MARKER__"
 
+
 @dataclass(slots=True)
 class Settings:
     default_wal_dir: Path = Path("/tmp/cailloudb-data") / "wal"
     default_sstable_dir: Path = Path("/tmp/cailloudb-data") / "sstables"
-    
+
     # Memory & Buffering
     memtable_max_bytes_size: int = 32 * 1024 * 1024  # 32 MB
-    wal_block_size: int = 32 * 1024                 # 32 KB
-    sstable_block_default_size: int = 4096          # 4 KB
-    
+    wal_block_size: int = 32 * 1024  # 32 KB
+    sstable_block_default_size: int = 4096  # 4 KB
+
     # SSTable & Compaction Limits
-    sstable_max_file_size: int = 64 * 1024 * 1024   # 64 MB
+    sstable_max_file_size: int = 64 * 1024 * 1024  # 64 MB
     sstable_max_levels: int = 7
     sstable_l0_compaction_trigger: int = 4
-    sstable_l1_max_bytes: int = 10 * 1024 * 1024    # 10 MB
+    sstable_l1_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     sstable_level_multiplier: int = 10

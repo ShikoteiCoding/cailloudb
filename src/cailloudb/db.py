@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
-from settings import Settings
 from dbreader import DbReader
+from settings import Settings
 from snapshot import DbSnapshot
 
 if TYPE_CHECKING:

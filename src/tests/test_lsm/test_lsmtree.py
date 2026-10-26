@@ -7,11 +7,11 @@ import time
 
 import pytest
 
-from cailloudb.settings import TOMBSTONE
 from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.lsmtree import LSMTree
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.utils import build_internal_key
+from cailloudb.settings import TOMBSTONE
 
 __all__ = [
     "test_lsmtree_internals_iteratively_0_record_memtable",

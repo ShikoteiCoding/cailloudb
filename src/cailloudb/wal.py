@@ -3,17 +3,17 @@ from pathlib import Path
 from typing import AsyncIterator, Iterator
 
 from settings import (
-    Settings,
+    STRUCT_WAL_CRC,
+    STRUCT_WAL_LEN,
+    STRUCT_WAL_PAYLOAD_LEN,
+    STRUCT_WAL_SEQ,
     WAL_BATCH_KIND_FIRST,
     WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
-    STRUCT_WAL_CRC,
     WAL_HEADER_SIZE,
-    STRUCT_WAL_LEN,
-    STRUCT_WAL_PAYLOAD_LEN,
-    STRUCT_WAL_SEQ,
     WAL_SINGLE_KIND,
+    Settings,
 )
 from write_batch import TOMBSTONE, WriteBatch
 
@@ -54,7 +54,6 @@ class Wal:
     def __init__(
         self,
         path: Path,
-        *,
         wal_block_size: int,
     ):
         self._wal_block_size = wal_block_size

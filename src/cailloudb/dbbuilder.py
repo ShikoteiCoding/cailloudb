@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 
-from settings import Settings
 from db import Db
+from settings import Settings
 
 if TYPE_CHECKING:
     from store import BaseStore

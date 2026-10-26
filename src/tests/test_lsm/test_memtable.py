@@ -1,8 +1,8 @@
 import pytest
 
-from cailloudb.settings import INTERNAL_KEY_LEN_METADATA, TOMBSTONE
 from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.memtable import MemTable
+from cailloudb.settings import INTERNAL_KEY_LEN_METADATA, TOMBSTONE, Settings
 
 __all__ = [
     "test_memtable_insert_and_get",
@@ -13,7 +13,7 @@ __all__ = [
 
 
 def test_memtable_insert_and_get():
-    memtable = MemTable()
+    memtable = MemTable(Settings().memtable_max_bytes_size)
 
     memtable.insert(b"key1", 0, b"val1")
 
@@ -28,7 +28,7 @@ def test_memtable_insert_and_get():
 
 
 def test_memtable_insert_tombstone():
-    memtable = MemTable()
+    memtable = MemTable(Settings().memtable_max_bytes_size)
 
     memtable.insert(b"key1", 0, b"val1")
 
