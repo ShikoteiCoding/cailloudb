@@ -14,7 +14,7 @@ __all__ = [
 
 @pytest.mark.asyncio
 async def test_dbreader_get(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
@@ -26,7 +26,7 @@ async def test_dbreader_get(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dbreader_scan(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
@@ -43,7 +43,7 @@ async def test_dbreader_scan(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dbreader_sees_db_writes(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
@@ -61,7 +61,7 @@ async def test_dbreader_sees_db_writes(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dbreader_latest_sequence_number(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 
@@ -75,7 +75,7 @@ async def test_dbreader_latest_sequence_number(tmp_path):
 
 @pytest.mark.asyncio
 async def test_db_reader_shares_store(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     reader_a = db.reader()

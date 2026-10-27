@@ -1,5 +1,6 @@
+import os
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 WAL_HEADER_SIZE = 7
@@ -33,6 +34,17 @@ TOMBSTONE = b"__INTERNAL_TOMBSTONE_MARKER__"
 
 @dataclass(slots=True)
 class Settings:
+    """
+    Runtime settings (hold only what should be configurable by the user).
+    """
+
+    # Usage architectural guardrail:
+    # - If a class distributes settings to other classes, pass it Settings.
+    # - If a class is an invariant, do not use Settings but constants values above.
+    # - If a class is a leaf in the codebase tree, do not pass Settings.
+    # - If an object creation is latency sensitive, do not use Settings.
+
+    # Disk paths
     default_wal_dir: Path = Path("/tmp/cailloudb-data") / "wal"
     default_sstable_dir: Path = Path("/tmp/cailloudb-data") / "sstables"
 
@@ -47,3 +59,58 @@ class Settings:
     sstable_l0_compaction_trigger: int = 4
     sstable_l1_max_bytes: int = 10 * 1024 * 1024  # 10 MB
     sstable_level_multiplier: int = 10
+
+    # Background processes
+    flush_enabled: bool = True
+    compaction_enabled: bool = True
+    compaction_interval_s: int = 10
+
+    def __post_init__(self) -> None:
+        for field in fields(self):
+            env_name = field.name.upper()
+            env_value = os.getenv(env_name)
+            if env_value is None:
+                continue
+
+            current_value = getattr(self, field.name)
+            converted_value = self._convert_env_value(
+                env_name=env_name,
+                raw_value=env_value,
+                current_value=current_value,
+            )
+            setattr(self, field.name, converted_value)
+
+        self._validate()
+
+    def _validate(self) -> None:
+        if self.sstable_l0_compaction_trigger < 1:
+            raise ValueError("`sstable_l0_compaction_trigger` must be >= 1")
+        if self.sstable_l1_max_bytes < 1:
+            raise ValueError("`sstable_l1_max_bytes` must be >= 1")
+        if self.sstable_level_multiplier < 1:
+            raise ValueError("`sstable_level_multiplier` must be >= 1")
+
+    @staticmethod
+    def _convert_env_value(
+        env_name: str, raw_value: str, current_value: object
+    ) -> object:
+        if isinstance(current_value, bool):
+            normalized = raw_value.strip().lower()
+            if normalized in {"1", "true", "True"}:
+                return True
+            if normalized in {"0", "false", "False"}:
+                return False
+            raise ValueError(f"Invalid boolean value for {env_name}: {raw_value!r}")
+
+        if isinstance(current_value, int):
+            try:
+                return int(raw_value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid integer value for {env_name}: {raw_value!r}"
+                ) from exc
+
+        if isinstance(current_value, Path):
+            return Path(raw_value)
+
+        return raw_value

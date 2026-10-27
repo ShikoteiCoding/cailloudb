@@ -26,7 +26,9 @@ __all__ = [
     "test_write_iterator_to_sstables_to_disk",
 ]
 
-SSTABLE_MAX_FILE_SIZE = Settings().sstable_max_file_size
+settings = Settings()
+SSTABLE_MAX_FILE_SIZE = settings.sstable_max_file_size
+SSTABLE_BLOCK_DEFAULT_SIZE = settings.sstable_block_default_size
 
 
 @pytest.fixture
@@ -65,10 +67,10 @@ def test_table_builder_add(table_builder: TableBuilder):
 
 def test_table_builder_flushes_block():
     table_builder = TableBuilder(
-        0,
-        True,
-        None,
-        30,  # Force small block size
+        file_id=0,
+        sstable_block_default_size=30,  # Force small block size
+        in_memory=True,
+        path=None,
     )
     table_builder.add(b"internal_key_1", b"val1")
     assert len(table_builder.index_entries) == 0
@@ -85,7 +87,12 @@ def test_table_builder_flushes_block():
 
 
 def test_table_builder_finish_state_transition_and_file_layout():
-    table_builder = TableBuilder(file_id=1, in_memory=True)
+    table_builder = TableBuilder(
+        file_id=1,
+        sstable_block_default_size=SSTABLE_BLOCK_DEFAULT_SIZE,
+        in_memory=True,
+        path=None,
+    )
     key_1 = build_internal_key(b"apple", 1, False)
     key_2 = build_internal_key(b"banana", 2, False)
 
@@ -143,8 +150,11 @@ def test_write_iterator_to_sstables_write_returns(
     memtable.insert(key=b"banana", seq_num=2, value=TOMBSTONE)
     memtable.insert(key=b"apple", seq_num=3, value=b"red")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert sstable.path == Path("000001.sst")
@@ -157,8 +167,11 @@ def test_write_iterator_to_sstables_write_sstable(memtable: MemTable):
     memtable.insert(key=b"key2", seq_num=1, value=b"val2")
     memtable.insert(key=b"key3", seq_num=2, value=TOMBSTONE)
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Check sparse index
@@ -187,8 +200,11 @@ def test_write_iterator_to_sstables_write_sstable(memtable: MemTable):
 def test_write_iterator_to_sstables_to_disk(memtable: MemTable):
     memtable.insert(key=b"key1", seq_num=1, value=b"val1")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert isinstance(sstable, SSTable)
@@ -211,6 +227,7 @@ def test_write_iterator_to_sstables_splits_when_builder_is_full():
         records,
         file_id_generator=_sequential_file_id_generator(10),
         max_file_size=1,  # Force small file size
+        target_block_size=SSTABLE_BLOCK_DEFAULT_SIZE,
         in_memory=True,
     )
 

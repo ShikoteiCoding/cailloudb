@@ -82,45 +82,23 @@ class LSMTree:
 
     def __init__(
         self,
-        memtable_size: int | None = None,
-        sstable_size: int | None = None,
-        max_levels: int | None = None,
-        wal_path: Path | None = None,
-        flush_enabled: bool = True,
-        compaction_enabled: bool = True,
-        compaction_interval_s: int = 10,
-        settings: Settings | None = None,
+        settings: Settings,
     ):
-        self._settings = settings or Settings()
-        memtable_size = (
-            self._settings.memtable_max_bytes_size
-            if memtable_size is None
-            else memtable_size
-        )
-        sstable_size = (
-            self._settings.sstable_max_file_size
-            if sstable_size is None
-            else sstable_size
-        )
-        max_levels = (
-            self._settings.sstable_max_levels if max_levels is None else max_levels
-        )
+        self._settings = settings
 
-        self.memtable_size = memtable_size
-        self.sstable_size = sstable_size
-        self.max_levels = max_levels
+        self.memtable_size = self._settings.memtable_max_bytes_size
+        self.sstable_size = self._settings.sstable_max_file_size
+        self.max_levels = self._settings.sstable_max_levels
 
-        self._memtable = MemTable(max_bytes_size=memtable_size)
+        self._memtable = MemTable(max_bytes_size=self.memtable_size)
         self._immutable_memtables = []
         self._sstables_map = {}
-        self._levels = [[] for _ in range(max_levels)]
+        self._levels = [[] for _ in range(self.max_levels)]
         self._next_file_id = 1
-        self._wal = (
-            Wal(wal_path, wal_block_size=self._settings.wal_block_size)
-            if wal_path is not None
-            else None
+        self._wal = Wal(
+            self._settings.default_wal_dir, wal_block_size=self._settings.wal_block_size
         )
-        self._compactor = Compactor()
+        self._compactor = Compactor(self._settings.sstable_block_default_size)
         self._file_picker = FilePicker(
             self._levels,
             self.max_levels,
@@ -131,10 +109,10 @@ class LSMTree:
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None
-        self._flush_enabled = flush_enabled
+        self._flush_enabled = self._settings.flush_enabled
         self._compaction_thread = None
-        self._compaction_enabled = compaction_enabled
-        self._compaction_interval_s = compaction_interval_s
+        self._compaction_enabled = self._settings.compaction_enabled
+        self._compaction_interval_s = self._settings.compaction_interval_s
 
         self._file_id_lock = threading.Lock()
         self._mem_lock = threading.Lock()
@@ -368,6 +346,7 @@ class LSMTree:
                     iterator=memtable.__iter__(),
                     file_id_generator=self.file_id_generator,
                     max_file_size=self.sstable_size,
+                    target_block_size=self._settings.sstable_block_default_size,
                 )
 
                 with self._sst_lock:

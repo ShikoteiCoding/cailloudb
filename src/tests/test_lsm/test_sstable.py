@@ -28,7 +28,9 @@ __all__ = [
     "test_sstable_scan_all_occurence_of_a_key",
 ]
 
-SSTABLE_MAX_FILE_SIZE = Settings().sstable_max_file_size
+settings = Settings()
+SSTABLE_MAX_FILE_SIZE = settings.sstable_max_file_size
+SSTABLE_BLOCK_DEFAULT_SIZE = settings.sstable_block_default_size
 
 
 @pytest.fixture
@@ -45,8 +47,11 @@ def test_sstable_get(memtable: MemTable):
     memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert sstable.get(b"apple", 3) == SSTableEntry(
@@ -66,8 +71,11 @@ def test_sstable_get_missing_key_in_range(memtable: MemTable):
     memtable.insert(key=b"apple", seq_num=1, value=b"red")
     memtable.insert(key=b"cherry", seq_num=2, value=b"dark-red")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert sstable.get(b"banana", 2) is None
@@ -79,8 +87,11 @@ def test_sstable_iter(memtable: MemTable):
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
     memtable.insert(key=b"lime", seq_num=4, value=b"green")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     ssentries = [ssentry for ssentry in sstable]
@@ -95,8 +106,11 @@ def test_sstable_scan_fixed_range(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test inclusive
@@ -141,8 +155,11 @@ def test_sstable_scan_unbounded_range(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test unbounded end_key
@@ -175,8 +192,11 @@ def test_sstable_scan_max_seq(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test fixed range
@@ -198,8 +218,11 @@ def test_sstable_scan_all_occurence_of_a_key(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key1", 1, TOMBSTONE)
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     result = [item for item in sstable.scan(None, None, 1)]
@@ -214,8 +237,11 @@ def test_sstable_scan_all_occurence_of_a_key(memtable: MemTable):
 def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
 
-    valid_sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    valid_sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
     valid_bytes = valid_sstable.file.getvalue()
 

@@ -53,18 +53,13 @@ class InMemoryStore(BaseStore):
 
     def __init__(
         self,
-        wal_path: Path,
     ):
         super().__init__()
 
         self.settings = Settings()
-        wal = self.settings.default_wal_dir if wal_path is None else wal_path
 
         self.__tree = LSMTree(
-            wal_path=wal,
-            memtable_size=self.settings.memtable_max_bytes_size,
-            sstable_size=self.settings.sstable_max_file_size,
-            max_levels=self.settings.sstable_max_levels,
+            settings=self.settings,
         )
         self._seq = SeqNum()
 

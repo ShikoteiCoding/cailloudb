@@ -9,7 +9,6 @@ from cailloudb.settings import (
     STRUCT_WAL_PAYLOAD_LEN,
     STRUCT_WAL_SEQ,
     WAL_BATCH_KIND_FIRST,
-    WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
     WAL_SINGLE_KIND,
@@ -80,7 +79,6 @@ async def test_append_delete_then_recover(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_writes_length_prefixed_record(tmp_path):
-    path = tmp_path / "wal"
     wal = Wal(tmp_path / "wal", Settings().wal_block_size)
     wal.append(b"ab", 0, b"xyz")
 
@@ -161,7 +159,7 @@ async def test_append_after_clear(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_put_and_delete_append_to_wal(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
 
     await store.put(b"a", b"1")
     await store.put(b"b", b"2")
@@ -177,7 +175,7 @@ async def test_store_put_and_delete_append_to_wal(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_write_appends_one_batch_record(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     batch = WriteBatch()
     batch.put(b"a", b"1")
     batch.put(b"b", b"2")
@@ -194,7 +192,7 @@ async def test_store_write_appends_one_batch_record(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
 
     await store.put(b"a", b"1")
     batch = WriteBatch()
@@ -255,7 +253,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
     wal.append(b"b", 1, b"2")
     wal.append(b"a", 2, b"")
 
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     async for key, _, val in wal.recover():
         if val:
             await store.put(key, val)

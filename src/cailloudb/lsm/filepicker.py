@@ -1,5 +1,4 @@
 from custom_types import FileMetaData
-from settings import Settings
 
 
 class FilePicker:
@@ -28,50 +27,15 @@ class FilePicker:
         self,
         levels: list[list[FileMetaData]],
         max_levels: int,
-        settings: Settings | None = None,
-        *,
-        sstable_l0_compaction_trigger: int | None = None,
-        sstable_l1_max_bytes: int | None = None,
-        sstable_level_multiplier: int | None = None,
+        sstable_l0_compaction_trigger: int,
+        sstable_l1_max_bytes: int,
+        sstable_level_multiplier: int,
     ):
-        if settings is not None and any(
-            v is not None
-            for v in (
-                sstable_l0_compaction_trigger,
-                sstable_l1_max_bytes,
-                sstable_level_multiplier,
-            )
-        ):
-            raise ValueError(
-                "Provide either `settings` or explicit compaction args, not both"
-            )
-
-        resolved_settings = settings or Settings()
-
         self._levels = levels
         self._max_levels = max_levels
-        self._sstable_l0_compaction_trigger = (
-            resolved_settings.sstable_l0_compaction_trigger
-            if sstable_l0_compaction_trigger is None
-            else sstable_l0_compaction_trigger
-        )
-        self._sstable_l1_max_bytes = (
-            resolved_settings.sstable_l1_max_bytes
-            if sstable_l1_max_bytes is None
-            else sstable_l1_max_bytes
-        )
-        self._sstable_level_multiplier = (
-            resolved_settings.sstable_level_multiplier
-            if sstable_level_multiplier is None
-            else sstable_level_multiplier
-        )
-
-        if self._sstable_l0_compaction_trigger < 1:
-            raise ValueError("`sstable_l0_compaction_trigger` must be >= 1")
-        if self._sstable_l1_max_bytes < 1:
-            raise ValueError("`sstable_l1_max_bytes` must be >= 1")
-        if self._sstable_level_multiplier < 1:
-            raise ValueError("`sstable_level_multiplier` must be >= 1")
+        self._sstable_l0_compaction_trigger = sstable_l0_compaction_trigger
+        self._sstable_l1_max_bytes = sstable_l1_max_bytes
+        self._sstable_level_multiplier = sstable_level_multiplier
 
     def pick_compaction_level(self) -> int:
         """

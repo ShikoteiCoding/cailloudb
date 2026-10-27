@@ -11,7 +11,7 @@ from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.lsmtree import LSMTree
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.utils import build_internal_key
-from cailloudb.settings import TOMBSTONE
+from cailloudb.settings import TOMBSTONE, Settings
 
 __all__ = [
     "test_lsmtree_internals_iteratively_0_record_memtable",
@@ -57,7 +57,8 @@ def _wait_for_condition(predicate, timeout_s: float = 2.0) -> None:
 
 @pytest.mark.asyncio
 async def test_lsmtree_internals_iteratively_0_record_memtable():
-    lsmtree = LSMTree(10)  # should be full for each record
+    settings = Settings(memtable_max_bytes_size=10)  # should be full for each record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     _wait_for_condition(
@@ -94,7 +95,8 @@ async def test_lsmtree_internals_iteratively_0_record_memtable():
 
 @pytest.mark.asyncio
 async def test_lsmtree_internals_iteratively_1_records_memtables():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree._memtable) == 1
@@ -119,7 +121,7 @@ async def test_lsmtree_internals_iteratively_1_records_memtables():
 
 @pytest.mark.asyncio
 async def test_lsmtree_get_from_skiplist():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     await lsmtree.put(b"key1", 0, b"val1")
 
@@ -129,7 +131,7 @@ async def test_lsmtree_get_from_skiplist():
 
 
 def test_lsmtree_get_from_immutable_memtable():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     older_imm = MemTable(max_bytes_size=128)
     older_imm.insert(b"key1", 0, b"val1")
@@ -145,7 +147,7 @@ def test_lsmtree_get_from_immutable_memtable():
 
 
 def test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     class NeverCalledSSTable:
         def get(self, _key: bytes, _seq_num: int):
@@ -166,7 +168,8 @@ def test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest():
 
 @pytest.mark.asyncio
 async def test_lsmtree_get_from_sstable_because_of_spill():
-    lsmtree = LSMTree(10)  # should be full for each record
+    settings = Settings(memtable_max_bytes_size=10)  # should be full for each record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -201,7 +204,8 @@ async def test_lsmtree_get_from_sstable_because_of_spill():
 
 @pytest.mark.asyncio
 async def test_lsmtree_get_from_sstable_or_skiplist():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -242,7 +246,8 @@ async def test_lsmtree_get_from_sstable_or_skiplist():
 
 @pytest.mark.asyncio
 async def test_lsm_delete_from_sstables_or_skiplist():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.delete(b"key1", 0)
     await lsmtree.delete(b"key2", 1)
@@ -254,7 +259,7 @@ async def test_lsm_delete_from_sstables_or_skiplist():
 
 
 def test_lsmtree_scan_includes_immutable_memtables():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     imm = MemTable(max_bytes_size=128)
     imm.insert(b"key_imm", 1, b"val_imm")
@@ -268,7 +273,7 @@ def test_lsmtree_scan_includes_immutable_memtables():
 
 
 def test_lsmtree_scan_skips_file_when_before_start_key():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     class CountingSSTable:
         def __init__(self, entries):
@@ -307,7 +312,7 @@ def test_lsmtree_scan_skips_file_when_before_start_key():
 
 
 def test_lsmtree_scan_level0_continues_on_end_bound():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     class CountingSSTable:
         def __init__(self, entries):
@@ -351,7 +356,7 @@ def test_lsmtree_scan_level0_continues_on_end_bound():
 
 
 def test_lsmtree_scan_level_gt_0_breaks_on_end_bound():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     class CountingSSTable:
         def __init__(self, entries):
@@ -395,7 +400,8 @@ def test_lsmtree_scan_level_gt_0_breaks_on_end_bound():
 
 @pytest.mark.asyncio
 async def test_lsmtree_scan_fixed_range():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -432,7 +438,8 @@ async def test_lsmtree_scan_fixed_range():
 
 @pytest.mark.asyncio
 async def test_lsmtree_scan_unbounded_range():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -465,7 +472,8 @@ async def test_lsmtree_scan_unbounded_range():
 
 @pytest.mark.asyncio
 async def test_lsmtree_scan_max_seq():
-    lsmtree = LSMTree(30)  # should hold only 1 record
+    settings = Settings(memtable_max_bytes_size=30)  # should hold exactly one record
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -487,7 +495,7 @@ async def test_lsmtree_scan_max_seq():
 
 
 def test_lsmtree_scan_iterator_agg_break(monkeypatch: pytest.MonkeyPatch):
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     # Mock iterator_agg internal function from scan()
     mock_iterator = iter(
@@ -521,7 +529,7 @@ def test_lsmtree_scan_iterator_agg_break(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     # Mock iterator_agg internal function from scan()
     mock_iterator = iter(
@@ -550,7 +558,11 @@ def test_lsmtree_scan_future_seq_continue(monkeypatch: pytest.MonkeyPatch):
 
 @pytest.mark.asyncio
 async def test_rotate_clears_wal_before_flush(tmp_path):
-    lsmtree = LSMTree(10, wal_path=tmp_path / "wal")
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should be full with one record
+        default_wal_dir=tmp_path / "wal",
+    )
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     _wait_for_condition(
@@ -569,7 +581,7 @@ async def test_rotate_clears_wal_before_flush(tmp_path):
 
 
 def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     _wait_for_condition(
         lambda: (
@@ -582,7 +594,7 @@ def test_lsmtree_flush_empty_flush(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_lsmtree_flush_worker_returns_when_queue_is_none():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
     lsmtree._flush_queue = None  # type: ignore[assignment]
 
     lsmtree._flush_worker()
@@ -591,7 +603,7 @@ def test_lsmtree_flush_worker_returns_when_queue_is_none():
 
 
 def test_lsmtree_flush_worker_exception_path():
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     class StubQueue:
         def __init__(self):
@@ -616,7 +628,8 @@ def test_lsmtree_flush_worker_exception_path():
 
 
 def test_lsmtree_start_compaction_worker_noop_when_disabled():
-    lsmtree = LSMTree(compaction_enabled=False)
+    settings = Settings(compaction_enabled=False)
+    lsmtree = LSMTree(settings)
 
     lsmtree._start_compaction_worker()
 
@@ -625,12 +638,13 @@ def test_lsmtree_start_compaction_worker_noop_when_disabled():
 
 @pytest.mark.asyncio
 async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime():
-    lsmtree = LSMTree(
-        memtable_size=10,
-        sstable_size=10,
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should be full with one record
+        sstable_max_file_size=10,  # should be full with one record
         compaction_enabled=True,
         compaction_interval_s=1,
     )
+    lsmtree = LSMTree(settings)
 
     assert lsmtree._compaction_thread is not None
     assert lsmtree._compaction_thread.is_alive()
@@ -657,10 +671,11 @@ async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level():
-    lsmtree = LSMTree(
-        memtable_size=10,  # should hold only 1 record
-        sstable_size=10,  # should hold only 1 record
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should be full with one record
+        sstable_max_file_size=10,  # should be full with one record
     )
+    lsmtree = LSMTree(settings)
 
     # 3 files in L0 is below default compaction trigger (4).
     await lsmtree.put(b"key1", 0, b"val1")
@@ -688,7 +703,7 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level():
 def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     # Ensure we pass the `source_level == -1` guard and hit `if not input_metas: return`.
     monkeypatch.setattr(lsmtree._file_picker, "pick_compaction_level", lambda: 0)
@@ -718,10 +733,11 @@ def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_uses_picker_selected_files():
-    lsmtree = LSMTree(
-        memtable_size=10,  # should hold only 1 record
-        sstable_size=10,  # should hold only 1 record
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should be full with one record
+        sstable_max_file_size=10,  # should be full with one record
     )
+    lsmtree = LSMTree(settings)
 
     # 4 files in L0 should trigger compaction selection for level 0.
     await lsmtree.put(b"key1", 0, b"val1")
@@ -748,7 +764,7 @@ async def test_lsmtree_sync_compact_uses_picker_selected_files():
 def test_lsmtree_sync_compact_replaces_levels_and_map(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    lsmtree = LSMTree()
+    lsmtree = LSMTree(Settings())
 
     source_meta = {
         "file_id": 1,
@@ -807,10 +823,11 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_then_scan():
-    lsmtree = LSMTree(
-        memtable_size=10,  # should hold only 1 record
-        sstable_size=10,  # should hold only 1 record
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should be full with one record
+        sstable_max_file_size=10,  # should be full with one record
     )
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
@@ -847,10 +864,11 @@ async def test_lsmtree_sync_compact_then_scan():
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_then_get():
-    lsmtree = LSMTree(
-        memtable_size=10,  # should hold only 1 record
-        sstable_size=10,  # should hold only 1 record
+    settings = Settings(
+        memtable_max_bytes_size=10,  # should hold only 1 record
+        sstable_max_file_size=10,  # should hold only 1 record
     )
+    lsmtree = LSMTree(settings)
 
     await lsmtree.put(b"key1", 0, b"val1")
     await lsmtree.put(b"key2", 1, b"val2")
