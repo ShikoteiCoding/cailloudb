@@ -1,4 +1,5 @@
 import heapq
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
 from lsm.table_builder import write_iterator_to_sstables
@@ -17,8 +18,12 @@ class Compactor:
     #: Target block size inside a sstable
     sstable_block_default_size: int
 
-    def __init__(self, sstable_block_default_size: int):
+    #: SSTable root dir
+    sstable_root_dir: Path | None
+
+    def __init__(self, sstable_block_default_size: int, sstable_root_dir: Path | None):
         self.sstable_block_default_size = sstable_block_default_size
+        self.sstable_root_dir = sstable_root_dir
 
     def compact(
         self,
@@ -38,6 +43,7 @@ class Compactor:
             level_sstable_size,
             self.sstable_block_default_size,
             True,
+            self.sstable_root_dir,
         )
 
     def _deduplicate_iterator(

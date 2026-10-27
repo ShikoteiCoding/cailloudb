@@ -1,7 +1,8 @@
+import abc
 import bisect
 import io
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 
 from custom_types import SSTableEntry
 from lsm.block import BlockReader
@@ -17,12 +18,12 @@ from settings import (
 )
 
 
-class SSTable:
+class SSTable(abc.ABC):
     #: File ID reference
     file_id: int
 
     #: Reference to file buffer object
-    file: io.BytesIO
+    file: io.BufferedReader
 
     #: Path to the file
     path: Path
@@ -33,15 +34,8 @@ class SSTable:
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
-    def __init__(self, file_id: int, file: io.BytesIO, path: Path):
-        self.file_id = file_id
-        self.file = file
-        self.path = path
-
-        self.index_keys = []
-        self.index_meta = []
-
-        self._load_index()
+    def __init__(self):
+        raise NotImplementedError("SSTable is not mean to be instanciated.")
 
     def _load_index(self):
         """
@@ -53,7 +47,7 @@ class SSTable:
         index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(footer_bytes)
 
         if magic != SSTABLE_MAGIC_NUMBER:
-            raise ValueError(f"Invalid magic number in SSTable: {self.path}")
+            raise ValueError(f"Invalid magic number in SSTable: {self.file_id}")
 
         # Read index
         self.file.seek(index_offset)
@@ -187,5 +181,25 @@ class InMemorySSTable(SSTable):
     In-memory SSTable for `cailloudb.store.InMemoryStore`
     """
 
-    def __init__(self, file_id: int, file: io.BytesIO, path: Path):
-        super().__init__(file_id, file, path)
+    def __init__(self, file_id: int, file: io.BufferedReader):
+        self.file_id = file_id
+        self.file = file
+
+        self.index_keys = []
+        self.index_meta = []
+
+        self._load_index()
+
+
+class DurableSSTable(SSTable):
+    """
+    Durable SSTable for `cailloudb.store.DurableSSTable`
+    """
+
+    def __init__(self, file_id: int, dir: Path, file_name: str):
+        self.file_id = file_id
+        self.index_keys = []
+        self.index_meta = []
+        self.file = (dir / file_name).open(mode="rb")
+
+        self._load_index()

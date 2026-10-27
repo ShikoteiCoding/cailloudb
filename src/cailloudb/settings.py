@@ -44,8 +44,10 @@ class Settings:
     # - If a class is a leaf in the codebase tree, do not pass Settings.
     # - If an object creation is latency sensitive, do not use Settings.
 
-    # Disk paths
+    # Durability
+    wal_enabled: bool = True
     default_wal_dir: Path = Path("/tmp/cailloudb-data") / "wal"
+    durable_sstable: bool = True
     default_sstable_dir: Path = Path("/tmp/cailloudb-data") / "sstables"
 
     # Memory & Buffering

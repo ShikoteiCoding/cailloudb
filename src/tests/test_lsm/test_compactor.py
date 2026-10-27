@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from cailloudb.lsm.compactor import Compactor
 from cailloudb.lsm.utils import build_internal_key
 from cailloudb.settings import Settings
@@ -7,11 +9,12 @@ __all__ = [
     "test_compactor_deduplicate_iterator_keeps_first_tombstone",
 ]
 
-SSTABLE_BLOCK_DEFAULT_SIZE = Settings().sstable_block_default_size
 
-
-def test_compactor_deduplicate_iterator_keeps_latest_key_version():
-    compactor = Compactor(SSTABLE_BLOCK_DEFAULT_SIZE)
+def test_compactor_deduplicate_iterator_keeps_latest_key_version(tmp_path: Path):
+    settings = Settings(default_sstable_dir=tmp_path)
+    compactor = Compactor(
+        settings.sstable_block_default_size, settings.default_sstable_dir
+    )
 
     latest_a = (build_internal_key(b"a", 7, False), b"new-a")
     old_a = (build_internal_key(b"a", 3, False), b"old-a")
@@ -27,8 +30,11 @@ def test_compactor_deduplicate_iterator_keeps_latest_key_version():
     assert output == [latest_a, latest_b]
 
 
-def test_compactor_deduplicate_iterator_keeps_first_tombstone():
-    compactor = Compactor(SSTABLE_BLOCK_DEFAULT_SIZE)
+def test_compactor_deduplicate_iterator_keeps_first_tombstone(tmp_path: Path):
+    settings = Settings(default_sstable_dir=tmp_path)
+    compactor = Compactor(
+        settings.sstable_block_default_size, settings.default_sstable_dir
+    )
 
     tombstone_first = (build_internal_key(b"k", 5, True), b"")
     older_put = (build_internal_key(b"k", 2, False), b"value")

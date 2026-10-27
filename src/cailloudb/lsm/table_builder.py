@@ -4,7 +4,7 @@ from typing import Callable, Iterator
 
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
-from lsm.sstable import InMemorySSTable, SSTable
+from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
     STRUCT_INTERNAL_KEY_LEN,
@@ -18,7 +18,8 @@ def write_iterator_to_sstables(
     file_id_generator: Callable[[], int],
     max_file_size: int,
     target_block_size: int,
-    in_memory: bool = True,
+    durable_sstable: bool,
+    sstable_dir: Path | None = None,
 ) -> list[tuple[SSTable, FileMetaData]]:
     """
     Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
@@ -32,7 +33,8 @@ def write_iterator_to_sstables(
             builder = TableBuilder(
                 file_id=current_file_id,
                 sstable_block_default_size=target_block_size,
-                in_memory=in_memory,
+                durable_sstable=durable_sstable,
+                sstable_dir=sstable_dir,
             )
 
         builder.add(internal_key, value)
@@ -63,11 +65,11 @@ class TableBuilder:
     #: File ID reference (unique)
     file_id: int
 
-    #: In memory flag
-    in_memory: bool
+    #: Durable SSTable flag
+    durable_sstable: bool
 
     #: Path to actual storage
-    path: Path | None
+    path: Path
 
     #: SSTable default block size
     sstable_block_default_size: int
@@ -76,15 +78,21 @@ class TableBuilder:
         self,
         file_id: int,
         sstable_block_default_size: int,
-        in_memory: bool = True,
-        path: Path | None = None,
+        durable_sstable: bool,
+        sstable_dir: Path | None = None,
     ):
         self.file_id = file_id
-        self.in_memory = in_memory
-        self.dir = path
+        self.durable_sstable = durable_sstable
+        self.dir = sstable_dir or Path()
         self.block_size = sstable_block_default_size
 
-        self.out = io.BytesIO()
+        if not self.durable_sstable:
+            raw_stream = io.BytesIO()
+            self.writer = io.BufferedWriter(raw_stream)
+        else:
+            self.file_name = f"{self.file_id:06d}.sst"
+            self.writer = (self.dir / self.file_name).open(mode="xb")
+
         self.block_builder = BlockBuilder(self.block_size)
         self.index_entries = []
         self.current_offset = 0
@@ -110,7 +118,7 @@ class TableBuilder:
 
     def _flush_block(self):
         block_data, last_internal_key = self.block_builder.finalize()
-        self.out.write(block_data)
+        self.writer.write(block_data)
         block_len = len(block_data)
         self.index_entries.append((last_internal_key, self.current_offset, block_len))
         self.current_offset += block_len
@@ -129,21 +137,23 @@ class TableBuilder:
             self._flush_block()
 
         # Write index block
-        index_offset = self.out.tell()
+        index_offset = self.writer.tell()
         for last_key, block_offset, block_len in self.index_entries:
-            self.out.write(STRUCT_INTERNAL_KEY_LEN.pack(len(last_key)))
-            self.out.write(last_key)
-            self.out.write(
+            self.writer.write(STRUCT_INTERNAL_KEY_LEN.pack(len(last_key)))
+            self.writer.write(last_key)
+            self.writer.write(
                 STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
             )
-        index_size = self.out.tell() - index_offset
+        index_size = self.writer.tell() - index_offset
 
         # Write footer
-        self.out.write(
+        self.writer.write(
             STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
         )
-        file_size = self.out.tell()
-        self.out.seek(0)
+        file_size = self.writer.tell()
+        self.writer.flush()
+        raw = self.writer.detach()
+        raw.seek(0)
 
         meta = FileMetaData(
             file_id=self.file_id,
@@ -152,17 +162,16 @@ class TableBuilder:
             file_size=file_size,
         )
 
-        sstable = (
-            InMemorySSTable(
+        if self.durable_sstable:
+            sstable = DurableSSTable(
                 file_id=self.file_id,
-                file=self.out,
-                path=Path(f"{self.file_id:06d}.sst"),
+                dir=self.dir,
+                file_name=self.file_name,
             )
-            if self.in_memory
-            else SSTable(
+        else:
+            sstable = InMemorySSTable(
                 file_id=self.file_id,
-                file=self.out,
-                path=Path(f"{self.file_id:06d}.sst"),
+                file=io.BufferedReader(raw),
             )
-        )
+
         return sstable, meta

@@ -138,5 +138,5 @@ class InMemoryStore(BaseStore):
         return int(self._seq)
 
 
-class DiskStore:
+class DurableStore:
     NotImplementedError()
