@@ -13,7 +13,6 @@ from settings import (
     WAL_BATCH_KIND_MIDDLE,
     WAL_HEADER_SIZE,
     WAL_SINGLE_KIND,
-    Settings,
 )
 from write_batch import TOMBSTONE, WriteBatch
 
@@ -57,10 +56,6 @@ class Wal:
         wal_block_size: int,
     ):
         self._wal_block_size = wal_block_size
-
-        # XXX: move to settings check
-        if self._wal_block_size <= WAL_HEADER_SIZE:
-            raise ValueError("`wal_block_size` must be greater than WAL_HEADER_SIZE")
 
         # create folder on disk
         path.mkdir(parents=True, exist_ok=True)

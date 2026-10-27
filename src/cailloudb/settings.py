@@ -83,6 +83,8 @@ class Settings:
         self._validate()
 
     def _validate(self) -> None:
+        if self.wal_block_size <= WAL_HEADER_SIZE:
+            raise ValueError("`wal_block_size` must be greater than WAL_HEADER_SIZE")
         if self.sstable_l0_compaction_trigger < 1:
             raise ValueError("`sstable_l0_compaction_trigger` must be >= 1")
         if self.sstable_l1_max_bytes < 1:

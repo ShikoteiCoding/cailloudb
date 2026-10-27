@@ -66,5 +66,5 @@ def test_memtable_as_dummy_iterator():
     memtable = MemTable(max_bytes_size=1)
     memtable.insert(b"key1", 0, b"val1")
 
-    # XXX: dummy next function
+    # NOTE: dummy next function
     assert next(memtable) == None

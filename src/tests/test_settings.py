@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.settings import Settings
+from cailloudb.settings import WAL_HEADER_SIZE, Settings
 
 __all__ = [
     "test_settings_reads_environment_overrides",
@@ -12,6 +12,7 @@ __all__ = [
     "test_settings_rejects_invalid_sstable_l0_compaction_trigger",
     "test_settings_rejects_invalid_sstable_l1_max_bytes",
     "test_settings_rejects_invalid_sstable_level_multiplier",
+    "test_settings_rejects_invalid_wal_block_size",
 ]
 
 
@@ -64,3 +65,10 @@ def test_settings_rejects_invalid_sstable_l1_max_bytes():
 def test_settings_rejects_invalid_sstable_level_multiplier():
     with pytest.raises(ValueError, match="`sstable_level_multiplier` must be >= 1"):
         Settings(sstable_level_multiplier=0)
+
+
+def test_settings_rejects_invalid_wal_block_size():
+    with pytest.raises(
+        ValueError, match="`wal_block_size` must be greater than WAL_HEADER_SIZE"
+    ):
+        Settings(wal_block_size=WAL_HEADER_SIZE)
