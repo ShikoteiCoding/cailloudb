@@ -1,6 +1,5 @@
 We keep forgetting what we want to do and we too lazy to maintain a tool for it :)
 
-- Add global settings and avoid constants altogether
 - Improve fileobj reference to avoid opening file for each write
 - Implement durable restart by replaying wal into the store
 - Use cheaper encoding for key / value length
