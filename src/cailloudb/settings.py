@@ -9,6 +9,7 @@ WAL_BATCH_KIND_FULL = 1
 WAL_BATCH_KIND_FIRST = 2
 WAL_BATCH_KIND_MIDDLE = 3
 WAL_BATCH_KIND_LAST = 4
+WAL_BLOCK_SIZE = 32 * 1024
 
 INTERNAL_KEY_VALUE_TYPE_DELETE = 0x0
 INTERNAL_KEY_VALUE_TYPE_PUT = 0x1
@@ -50,7 +51,6 @@ class Settings:
 
     # Memory & Buffering
     memtable_max_bytes_size: int = 32 * 1024 * 1024  # 32 MB
-    wal_block_size: int = 32 * 1024  # 32 KB
     sstable_block_default_size: int = 4096  # 4 KB
 
     # SSTable & Compaction Limits
@@ -83,8 +83,6 @@ class Settings:
         self._validate()
 
     def _validate(self) -> None:
-        if self.wal_block_size <= WAL_HEADER_SIZE:
-            raise ValueError("`wal_block_size` must be greater than WAL_HEADER_SIZE")
         if self.sstable_l0_compaction_trigger < 1:
             raise ValueError("`sstable_l0_compaction_trigger` must be >= 1")
         if self.sstable_l1_max_bytes < 1:

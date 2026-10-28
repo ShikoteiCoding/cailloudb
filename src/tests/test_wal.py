@@ -11,8 +11,8 @@ from cailloudb.settings import (
     WAL_BATCH_KIND_FIRST,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
+    WAL_BLOCK_SIZE,
     WAL_SINGLE_KIND,
-    Settings,
 )
 
 __all__ = [
@@ -39,12 +39,10 @@ __all__ = [
     "test_append_rejects_payload_longer_than_uint16",
 ]
 
-WAL_BLOCK_SIZE = Settings().wal_block_size
-
 
 @pytest.mark.asyncio
 async def test_recover_empty_wal(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
 
     records = [record async for record in wal.recover()]
     assert records == []
@@ -52,7 +50,7 @@ async def test_recover_empty_wal(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_put_then_recover(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
 
     records = [record async for record in wal.recover()]
@@ -61,7 +59,7 @@ async def test_append_put_then_recover(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_none_value_then_recover(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, None)
 
     records = [record async for record in wal.recover()]
@@ -70,7 +68,7 @@ async def test_append_none_value_then_recover(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_delete_then_recover(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"")
 
     records = [record async for record in wal.recover()]
@@ -79,7 +77,7 @@ async def test_append_delete_then_recover(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_writes_length_prefixed_record(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"ab", 0, b"xyz")
 
     payload = (
@@ -101,7 +99,7 @@ async def test_append_writes_length_prefixed_record(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_preserves_order(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     wal.append(b"b", 1, b"2")
     wal.append(b"a", 2, b"")
@@ -118,7 +116,7 @@ async def test_append_preserves_order(tmp_path):
 
 @pytest.mark.asyncio
 async def test_clear_drops_logged_records(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     sealed = wal._path
     assert sealed.name == "wal_000001.log"
@@ -133,11 +131,11 @@ async def test_clear_drops_logged_records(tmp_path):
 
 @pytest.mark.asyncio
 async def test_reopen_opens_a_new_file(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     previous = wal._path
 
-    reopened = Wal(tmp_path / "wal", Settings().wal_block_size)
+    reopened = Wal(tmp_path / "wal")
 
     assert previous.name == "wal_000001.log"
     assert previous.read_bytes()
@@ -148,7 +146,7 @@ async def test_reopen_opens_a_new_file(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_after_clear(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     wal.roll()
     wal.append(b"b", 1, b"2")
@@ -212,7 +210,7 @@ async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
 
 @pytest.mark.asyncio
 async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     batch = WriteBatch()
     batch.put(b"b", b"lyon")
     batch.put(b"c", b"paris")
@@ -228,7 +226,7 @@ async def test_recover_batch_assigns_one_sequence_per_operation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_large_batch_fragments_across_blocks(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     count = 5000
     batch = WriteBatch()
     for i in range(count):
@@ -248,7 +246,7 @@ async def test_append_large_batch_fragments_across_blocks(tmp_path):
 
 @pytest.mark.asyncio
 async def test_recover_replays_into_empty_store(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     wal.append(b"b", 1, b"2")
     wal.append(b"a", 2, b"")
@@ -267,7 +265,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_returns_records_before_a_short_tail(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     wal.append(b"b", 2, b"2")
 
@@ -281,7 +279,7 @@ async def test_recover_returns_records_before_a_short_tail(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_returns_records_before_a_partial_header(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
 
     path = wal._path
@@ -294,7 +292,7 @@ async def test_recover_returns_records_before_a_partial_header(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_rejects_unknown_record_kind(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
 
     kind = b"\xff"
     payload = b"\x00" * 24
@@ -314,7 +312,7 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
 @pytest.mark.asyncio
 async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     log = wal._path
     middle = log.stat().st_size
@@ -332,7 +330,7 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
 @pytest.mark.asyncio
 async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     log = wal._path
     last = log.stat().st_size
@@ -348,7 +346,7 @@ async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_rejects_payload_longer_than_uint16(tmp_path):
-    wal = Wal(tmp_path / "wal", Settings().wal_block_size)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
 
     with pytest.raises(ValueError, match="wal single record exceeds block"):

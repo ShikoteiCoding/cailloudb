@@ -11,6 +11,7 @@ from settings import (
     WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
+    WAL_BLOCK_SIZE,
     WAL_HEADER_SIZE,
     WAL_SINGLE_KIND,
 )
@@ -53,9 +54,8 @@ class Wal:
     def __init__(
         self,
         path: Path,
-        wal_block_size: int,
     ):
-        self._wal_block_size = wal_block_size
+        self._wal_block_size = WAL_BLOCK_SIZE
 
         # create folder on disk
         path.mkdir(parents=True, exist_ok=True)

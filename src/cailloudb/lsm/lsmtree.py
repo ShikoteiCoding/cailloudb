@@ -95,9 +95,7 @@ class LSMTree:
         self._sstables_map = {}
         self._levels = [[] for _ in range(self.max_levels)]
         self._next_file_id = 1
-        self._wal = Wal(
-            self._settings.default_wal_dir, wal_block_size=self._settings.wal_block_size
-        )
+        self._wal = Wal(self._settings.default_wal_dir)
         self._compactor = Compactor(self._settings.sstable_block_default_size)
         self._file_picker = FilePicker(
             self._levels,

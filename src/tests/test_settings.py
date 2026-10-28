@@ -43,13 +43,6 @@ def test_settings_rejects_invalid_boolean_environment_value(monkeypatch):
         Settings()
 
 
-def test_settings_rejects_invalid_integer_environment_value(monkeypatch):
-    monkeypatch.setenv("WAL_BLOCK_SIZE", "not-a-number")
-
-    with pytest.raises(ValueError, match="Invalid integer value"):
-        Settings()
-
-
 def test_settings_rejects_invalid_sstable_l0_compaction_trigger():
     with pytest.raises(
         ValueError, match="`sstable_l0_compaction_trigger` must be >= 1"
@@ -65,10 +58,3 @@ def test_settings_rejects_invalid_sstable_l1_max_bytes():
 def test_settings_rejects_invalid_sstable_level_multiplier():
     with pytest.raises(ValueError, match="`sstable_level_multiplier` must be >= 1"):
         Settings(sstable_level_multiplier=0)
-
-
-def test_settings_rejects_invalid_wal_block_size():
-    with pytest.raises(
-        ValueError, match="`wal_block_size` must be greater than WAL_HEADER_SIZE"
-    ):
-        Settings(wal_block_size=WAL_HEADER_SIZE)
