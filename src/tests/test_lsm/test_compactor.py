@@ -1,17 +1,17 @@
-import pytest
-
 from cailloudb.lsm.compactor import Compactor
-from cailloudb.lsm.sstable import InMemorySSTable
 from cailloudb.lsm.utils import build_internal_key
+from cailloudb.settings import Settings
 
 __all__ = [
     "test_compactor_deduplicate_iterator_keeps_latest_key_version",
     "test_compactor_deduplicate_iterator_keeps_first_tombstone",
 ]
 
+SSTABLE_BLOCK_DEFAULT_SIZE = Settings().sstable_block_default_size
+
 
 def test_compactor_deduplicate_iterator_keeps_latest_key_version():
-    compactor = Compactor()
+    compactor = Compactor(SSTABLE_BLOCK_DEFAULT_SIZE)
 
     latest_a = (build_internal_key(b"a", 7, False), b"new-a")
     old_a = (build_internal_key(b"a", 3, False), b"old-a")
@@ -28,7 +28,7 @@ def test_compactor_deduplicate_iterator_keeps_latest_key_version():
 
 
 def test_compactor_deduplicate_iterator_keeps_first_tombstone():
-    compactor = Compactor()
+    compactor = Compactor(SSTABLE_BLOCK_DEFAULT_SIZE)
 
     tombstone_first = (build_internal_key(b"k", 5, True), b"")
     older_put = (build_internal_key(b"k", 2, False), b"value")

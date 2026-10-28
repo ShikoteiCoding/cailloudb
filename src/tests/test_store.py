@@ -15,8 +15,8 @@ __all__ = [
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_get_never_raises(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_in_memory_store_get_never_raises():
+    store = InMemoryStore()
 
     await store.put(b"test1", b"val1")
     assert await store.get(b"test1") == b"val1"
@@ -29,8 +29,8 @@ async def test_in_memory_store_get_never_raises(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_get_at_never_raises(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_in_memory_store_get_at_never_raises():
+    store = InMemoryStore()
 
     await store.put(b"test1", b"val1")
     assert await store.get_at(b"test1", seq_num=0) == b"val1"
@@ -47,8 +47,8 @@ async def test_in_memory_store_get_at_never_raises(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_delete_never_raises(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_in_memory_store_delete_never_raises():
+    store = InMemoryStore()
 
     # Check deletion on non existent key
     await store.delete(b"test1")
@@ -63,8 +63,8 @@ async def test_in_memory_store_delete_never_raises(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_store_write_batch(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_store_write_batch():
+    store = InMemoryStore()
     batch = WriteBatch()
 
     batch.put(b"test1", b"val1")
@@ -85,8 +85,8 @@ async def test_store_write_batch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_scan(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_in_memory_store_scan():
+    store = InMemoryStore()
 
     await store.put(b"b", b"2")
     await store.put(b"a", b"1")
@@ -108,8 +108,8 @@ async def test_in_memory_store_scan(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_in_memory_store_scan_at(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_in_memory_store_scan_at():
+    store = InMemoryStore()
 
     await store.put(b"b", b"2")
     await store.put(b"a", b"1")
@@ -131,24 +131,24 @@ async def test_in_memory_store_scan_at(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_put_rejects_none_value(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_put_rejects_none_value():
+    store = InMemoryStore()
 
     with pytest.raises(ValueError):
         await store.put(b"a", None)  # type: ignore
 
     assert await store.latest_sequence_number() == 0
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == []
 
 
 @pytest.mark.asyncio
-async def test_put_rejects_non_bytes_key(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+async def test_put_rejects_non_bytes_key():
+    store = InMemoryStore()
 
     with pytest.raises(KeyError, match="invalid for key"):
         await store.put("a", b"1")  # type: ignore[arg-type]
 
     assert await store.latest_sequence_number() == 0
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == []

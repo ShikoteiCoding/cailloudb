@@ -14,7 +14,7 @@ __all__ = [
 
 @pytest.mark.asyncio
 async def test_store_get_never_raises(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -29,7 +29,7 @@ async def test_store_get_never_raises(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_delete_never_raises(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"test1", b"val1")
@@ -45,7 +45,7 @@ async def test_store_delete_never_raises(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_write_batch(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     batch = WriteBatch()
@@ -68,7 +68,7 @@ async def test_store_write_batch(tmp_path):
 
 @pytest.mark.asyncio
 async def test_in_memory_store_scan(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
 
     await db.put(b"b", b"2")
@@ -92,7 +92,7 @@ async def test_in_memory_store_scan(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scan_same_on_db_and_reader(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     db = DbBuilder(TEST_DB, store).build()
     reader = db.reader()
 

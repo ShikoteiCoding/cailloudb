@@ -14,6 +14,12 @@ class Compactor:
     Compact multiple SSTables into a new level of SSTables.
     """
 
+    #: Target block size inside a sstable
+    sstable_block_default_size: int
+
+    def __init__(self, sstable_block_default_size: int):
+        self.sstable_block_default_size = sstable_block_default_size
+
     def compact(
         self,
         sstables_to_merge: list[SSTable],
@@ -30,7 +36,8 @@ class Compactor:
             self._deduplicate_iterator(merged_iterators),
             file_id_generator,
             level_sstable_size,
-            in_memory=True,
+            self.sstable_block_default_size,
+            True,
         )
 
     def _deduplicate_iterator(
@@ -42,7 +49,7 @@ class Compactor:
         last_seen_key = None
 
         for internal_key, value in merged_stream:
-            key, _, value_type = extract_from_internal_key(internal_key)
+            key, _, _value_type = extract_from_internal_key(internal_key)
 
             # Drop old versions of the key
             # XXX: Implement a last active snapshot guardrail
