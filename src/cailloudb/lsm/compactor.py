@@ -21,9 +21,18 @@ class Compactor:
     #: SSTable root dir
     sstable_root_dir: Path | None
 
-    def __init__(self, sstable_block_default_size: int, sstable_root_dir: Path | None):
+    #: SSTable durability flag
+    durable_sstable: bool
+
+    def __init__(
+        self,
+        sstable_block_default_size: int,
+        sstable_root_dir: Path | None,
+        durable_sstable: bool,
+    ):
         self.sstable_block_default_size = sstable_block_default_size
         self.sstable_root_dir = sstable_root_dir
+        self.durable_sstable = durable_sstable
 
     def compact(
         self,
@@ -42,7 +51,7 @@ class Compactor:
             file_id_generator,
             level_sstable_size,
             self.sstable_block_default_size,
-            True,
+            self.durable_sstable,
             self.sstable_root_dir,
         )
 

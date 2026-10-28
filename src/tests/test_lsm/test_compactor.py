@@ -13,7 +13,7 @@ __all__ = [
 def test_compactor_deduplicate_iterator_keeps_latest_key_version(tmp_path: Path):
     settings = Settings(default_sstable_dir=tmp_path)
     compactor = Compactor(
-        settings.sstable_block_default_size, settings.default_sstable_dir
+        settings.sstable_block_default_size, settings.default_sstable_dir, False
     )
 
     latest_a = (build_internal_key(b"a", 7, False), b"new-a")
@@ -33,7 +33,7 @@ def test_compactor_deduplicate_iterator_keeps_latest_key_version(tmp_path: Path)
 def test_compactor_deduplicate_iterator_keeps_first_tombstone(tmp_path: Path):
     settings = Settings(default_sstable_dir=tmp_path)
     compactor = Compactor(
-        settings.sstable_block_default_size, settings.default_sstable_dir
+        settings.sstable_block_default_size, settings.default_sstable_dir, False
     )
 
     tombstone_first = (build_internal_key(b"k", 5, True), b"")

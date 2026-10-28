@@ -34,9 +34,6 @@ class SSTable(abc.ABC):
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
-    def __init__(self):
-        raise NotImplementedError("SSTable is not mean to be instanciated.")
-
     def _load_index(self):
         """
         Reads the footer and parses the index block into memory.

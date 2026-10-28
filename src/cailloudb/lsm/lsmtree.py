@@ -83,11 +83,9 @@ class LSMTree:
     #: Durability control for SSTables
     durable_sstable: bool
 
-    def __init__(
-        self,
-        settings: Settings,
-    ):
+    def __init__(self, settings: Settings, durable_sstable: bool):
         self._settings = settings
+        self.durable_sstable = durable_sstable
 
         self.memtable_size = self._settings.memtable_max_bytes_size
         self.sstable_size = self._settings.sstable_max_file_size
@@ -102,6 +100,7 @@ class LSMTree:
         self._compactor = Compactor(
             self._settings.sstable_block_default_size,
             self._settings.default_sstable_dir,
+            self.durable_sstable,
         )
         self._wal = Wal(self._settings.default_wal_dir)
         self._file_picker = FilePicker(
@@ -122,8 +121,6 @@ class LSMTree:
         self._file_id_lock = threading.Lock()
         self._mem_lock = threading.Lock()
         self._sst_lock = threading.Lock()
-
-        self.durable_sstable = self._settings.durable_sstable
 
         if self.durable_sstable:
             (self._settings.default_sstable_dir).mkdir(parents=True, exist_ok=True)

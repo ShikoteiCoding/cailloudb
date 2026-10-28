@@ -48,7 +48,6 @@ class Settings:
     # Durability
     wal_enabled: bool = True
     default_wal_dir: Path = Path("/tmp/cailloudb-data") / "wal"
-    durable_sstable: bool = True
     default_sstable_dir: Path = Path("/tmp/cailloudb-data") / "sstables"
 
     # Memory & Buffering
