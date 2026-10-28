@@ -120,7 +120,7 @@ class LSMTree:
         self._start_compaction_worker()
 
     def close(self) -> None:
-        """Close the WAL; background workers do not write to it."""
+        """Close current WAL"""
         if self._wal is not None:
             self._wal.close()
 
