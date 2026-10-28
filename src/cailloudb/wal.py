@@ -259,5 +259,5 @@ class Wal:
         self._file = new_file
 
     def close(self) -> None:
-        """ Close the active WAL file"""
+        """Close the active WAL file"""
         self._file.close()
