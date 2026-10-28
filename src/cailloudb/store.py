@@ -16,6 +16,9 @@ class BaseStore(ABC):
     _seq: SeqNum
 
     @abstractmethod
+    def close(self) -> None: ...
+
+    @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
 
     @abstractmethod
@@ -53,6 +56,9 @@ class InMemoryStore(BaseStore):
 
         self.__tree = LSMTree(wal_path=wal_path)
         self._seq = SeqNum()
+
+    def close(self) -> None:
+        self.__tree.close()
 
     async def get(self, key: bytes) -> bytes | None:
         """
