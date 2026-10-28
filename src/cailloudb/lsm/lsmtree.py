@@ -119,11 +119,6 @@ class LSMTree:
         self._start_flush_worker()
         self._start_compaction_worker()
 
-    def close(self) -> None:
-        """Close current WAL"""
-        if self._wal is not None:
-            self._wal.close()
-
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Put a key-value pair into the currently active memtable.

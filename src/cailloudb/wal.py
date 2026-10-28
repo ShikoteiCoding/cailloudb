@@ -245,15 +245,11 @@ class Wal:
         # only archive for now
         path = self._path.parent / f"wal_{self._number + 1:06d}.log"
         new_file = path.open("ab")
-        try:
-            self.close()
-        except BaseException:
-            new_file.close()
-            raise
+        self.close()
         self._number += 1
         self._path = path
         self._file = new_file
 
     def close(self) -> None:
-        """Flush and close the active WAL file."""
+        """ Close the active WAL file"""
         self._file.close()

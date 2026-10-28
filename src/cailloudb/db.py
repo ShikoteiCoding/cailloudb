@@ -30,8 +30,7 @@ class Db:
     async def delete(self, key: bytes):
         await self.store.delete(key)
 
-    async def shutdown(self):
-        self.store.close()
+    async def shutdown(self): ...
 
     async def write(self, batch: WriteBatch):
         await self.store.write(batch)
