@@ -1,13 +1,13 @@
 import io
 from typing import Iterator
 
-from constants import (
-    INTERNAL_KEY_LEN_STRUCT,
-    INTERNAL_KEY_METADATA_STRUCT,
-    INTERNAL_KEY_VALUE_TYPE_DELETE,
-    SSTABLE_BLOCK_VALUE_LEN_STRUCT,
-)
 from lsm.utils import extract_from_internal_key
+from settings import (
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
+    STRUCT_SSTABLE_BLOCK_VALUE_LEN,
+)
 
 
 class BlockBuilder:
@@ -39,11 +39,11 @@ class BlockBuilder:
             [Key length][Internal Key][Value length][Value]
         """
         # Write key
-        self.buffer.write(INTERNAL_KEY_LEN_STRUCT.pack(len(internal_key)))
+        self.buffer.write(STRUCT_INTERNAL_KEY_LEN.pack(len(internal_key)))
         self.buffer.write(internal_key)
 
         # Write value
-        self.buffer.write(SSTABLE_BLOCK_VALUE_LEN_STRUCT.pack(len(value)))
+        self.buffer.write(STRUCT_SSTABLE_BLOCK_VALUE_LEN.pack(len(value)))
         self.buffer.write(value)
 
         self.last_internal_key = internal_key
@@ -103,16 +103,16 @@ class BlockReader:
 
         while cursor < self.size:
             # Read key length
-            key_len = INTERNAL_KEY_LEN_STRUCT.unpack_from(self.data, cursor)[0]
-            cursor += INTERNAL_KEY_LEN_STRUCT.size
+            key_len = STRUCT_INTERNAL_KEY_LEN.unpack_from(self.data, cursor)[0]
+            cursor += STRUCT_INTERNAL_KEY_LEN.size
 
             # Read key
             internal_key = self.data[cursor : cursor + key_len]
             cursor += key_len
 
             # Read value length
-            val_len = SSTABLE_BLOCK_VALUE_LEN_STRUCT.unpack_from(self.data, cursor)[0]
-            cursor += SSTABLE_BLOCK_VALUE_LEN_STRUCT.size
+            val_len = STRUCT_SSTABLE_BLOCK_VALUE_LEN.unpack_from(self.data, cursor)[0]
+            cursor += STRUCT_SSTABLE_BLOCK_VALUE_LEN.size
 
             # Read value
             value = self.data[cursor : cursor + val_len]
@@ -131,7 +131,7 @@ class BlockReader:
         """
         for internal_key, value in self:
             # Extract table_key
-            table_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
+            table_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
 
             # Optimization: keys are sorted, if  table_key > target key, it is not in this block.
             if table_key > key:

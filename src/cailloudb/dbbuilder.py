@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING
 
 from db import Db
+from settings import Settings
 
 if TYPE_CHECKING:
     from store import BaseStore
@@ -13,9 +14,17 @@ class DbBuilder:
     #: Store ref
     store: BaseStore
 
-    def __init__(self, name: str, store: BaseStore):
+    #: Runtime settings
+    settings: Settings
+
+    def __init__(
+        self,
+        name: str,
+        store: BaseStore,
+    ):
         self.name = name
         self.store = store
+        self.settings = Settings()
 
     def build(self) -> Db:
-        return Db(self.store)
+        return Db(self.store, self.settings)

@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, AsyncIterator
 
-from constants import DEFAULT_WAL
 from custom_types import SeqNum
 from lsm.lsmtree import LSMTree
+from settings import Settings
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 class BaseStore(ABC):
     #: Sequence number for atomic write ops (put, del, merge)
     _seq: SeqNum
+
+    #: Runtime settings
+    settings: Settings
 
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
@@ -48,10 +51,16 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    def __init__(self, wal_path: Path = DEFAULT_WAL):
+    def __init__(
+        self,
+    ):
         super().__init__()
 
-        self.__tree = LSMTree(wal_path=wal_path)
+        self.settings = Settings()
+
+        self.__tree = LSMTree(
+            settings=self.settings,
+        )
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes | None:

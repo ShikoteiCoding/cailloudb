@@ -3,20 +3,20 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.constants import (
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-    SSTABLE_MAX_FILE_SIZE,
-    TOMBSTONE,
-)
 from cailloudb.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
     InMemorySSTable,
     SSTable,
 )
-from cailloudb.lsm.table_builder import TableBuilder, write_iterator_to_sstables
+from cailloudb.lsm.table_builder import write_iterator_to_sstables
 from cailloudb.lsm.utils import extract_from_internal_key
+from cailloudb.settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_SSTABLE_FOOTER,
+    TOMBSTONE,
+    Settings,
+)
 
 __all__ = [
     "test_sstable_get",
@@ -28,10 +28,14 @@ __all__ = [
     "test_sstable_scan_all_occurence_of_a_key",
 ]
 
+settings = Settings()
+SSTABLE_MAX_FILE_SIZE = settings.sstable_max_file_size
+SSTABLE_BLOCK_DEFAULT_SIZE = settings.sstable_block_default_size
+
 
 @pytest.fixture
 def memtable() -> MemTable:
-    return MemTable()
+    return MemTable(Settings().memtable_max_bytes_size)
 
 
 def _fixed_file_id_generator(file_id: int):
@@ -43,8 +47,11 @@ def test_sstable_get(memtable: MemTable):
     memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert sstable.get(b"apple", 3) == SSTableEntry(
@@ -64,8 +71,11 @@ def test_sstable_get_missing_key_in_range(memtable: MemTable):
     memtable.insert(key=b"apple", seq_num=1, value=b"red")
     memtable.insert(key=b"cherry", seq_num=2, value=b"dark-red")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     assert sstable.get(b"banana", 2) is None
@@ -77,8 +87,11 @@ def test_sstable_iter(memtable: MemTable):
     memtable.insert(key=b"cherry", seq_num=3, value=TOMBSTONE)
     memtable.insert(key=b"lime", seq_num=4, value=b"green")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     ssentries = [ssentry for ssentry in sstable]
@@ -93,8 +106,11 @@ def test_sstable_scan_fixed_range(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test inclusive
@@ -139,8 +155,11 @@ def test_sstable_scan_unbounded_range(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test unbounded end_key
@@ -173,8 +192,11 @@ def test_sstable_scan_max_seq(memtable: MemTable):
     memtable.insert(b"key2", 1, b"val2")
     memtable.insert(b"key3", 2, b"val3")
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     # Test fixed range
@@ -196,8 +218,11 @@ def test_sstable_scan_all_occurence_of_a_key(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
     memtable.insert(b"key1", 1, TOMBSTONE)
 
-    sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
 
     result = [item for item in sstable.scan(None, None, 1)]
@@ -212,13 +237,16 @@ def test_sstable_scan_all_occurence_of_a_key(memtable: MemTable):
 def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     memtable.insert(b"key1", 0, b"val1")
 
-    valid_sstable, file_metadata = write_iterator_to_sstables(
-        memtable, _fixed_file_id_generator(1), SSTABLE_MAX_FILE_SIZE
+    valid_sstable, _file_metadata = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
     )[0]
     valid_bytes = valid_sstable.file.getvalue()
 
-    index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(
-        valid_bytes[-SSTABLE_FOOTER_STRUCT.size :]
+    index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(
+        valid_bytes[-STRUCT_SSTABLE_FOOTER.size :]
     )
     assert magic == SSTABLE_MAGIC_NUMBER
 
@@ -227,8 +255,8 @@ def test_sstable_SSTABLE_MAGIC_NUMBER_fence(memtable: MemTable):
     assert reloaded_sstable.index_meta == valid_sstable.index_meta
 
     invalid_magic = (SSTABLE_MAGIC_NUMBER + 1) & 0xFFFFFFFF
-    invalid_footer = SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, invalid_magic)
-    invalid_bytes = valid_bytes[: -SSTABLE_FOOTER_STRUCT.size] + invalid_footer
+    invalid_footer = STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, invalid_magic)
+    invalid_bytes = valid_bytes[: -STRUCT_SSTABLE_FOOTER.size] + invalid_footer
 
     with pytest.raises(ValueError, match="Invalid magic number"):
         SSTable(1, io.BytesIO(invalid_bytes), Path("invalid_magic.sst"))

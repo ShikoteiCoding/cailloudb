@@ -2,22 +2,22 @@ import io
 from pathlib import Path
 from typing import Callable, Iterator
 
-from constants import (
-    INTERNAL_KEY_LEN_STRUCT,
-    SSTABLE_BLOCK_DEFAULT_SIZE,
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-)
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
 from lsm.sstable import InMemorySSTable, SSTable
+from settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_SSTABLE_FOOTER,
+    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
+)
 
 
 def write_iterator_to_sstables(
     iterator: Iterator[tuple[bytes, bytes]],
     file_id_generator: Callable[[], int],
     max_file_size: int,
+    target_block_size: int,
     in_memory: bool = True,
 ) -> list[tuple[SSTable, FileMetaData]]:
     """
@@ -29,7 +29,11 @@ def write_iterator_to_sstables(
 
     for internal_key, value in iterator:
         if builder is None:
-            builder = TableBuilder(file_id=current_file_id, in_memory=in_memory)
+            builder = TableBuilder(
+                file_id=current_file_id,
+                sstable_block_default_size=target_block_size,
+                in_memory=in_memory,
+            )
 
         builder.add(internal_key, value)
 
@@ -56,17 +60,29 @@ class TableBuilder:
         sstable, meta = builder.finish()
     """
 
+    #: File ID reference (unique)
+    file_id: int
+
+    #: In memory flag
+    in_memory: bool
+
+    #: Path to actual storage
+    path: Path | None
+
+    #: SSTable default block size
+    sstable_block_default_size: int
+
     def __init__(
         self,
         file_id: int,
+        sstable_block_default_size: int,
         in_memory: bool = True,
-        dir: Path | None = None,
-        block_size: int = SSTABLE_BLOCK_DEFAULT_SIZE,
+        path: Path | None = None,
     ):
         self.file_id = file_id
         self.in_memory = in_memory
-        self.dir = dir
-        self.block_size = block_size
+        self.dir = path
+        self.block_size = sstable_block_default_size
 
         self.out = io.BytesIO()
         self.block_builder = BlockBuilder(self.block_size)
@@ -115,16 +131,16 @@ class TableBuilder:
         # Write index block
         index_offset = self.out.tell()
         for last_key, block_offset, block_len in self.index_entries:
-            self.out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
+            self.out.write(STRUCT_INTERNAL_KEY_LEN.pack(len(last_key)))
             self.out.write(last_key)
             self.out.write(
-                SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(block_offset, block_len)
+                STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
             )
         index_size = self.out.tell() - index_offset
 
         # Write footer
         self.out.write(
-            SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
+            STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
         )
         file_size = self.out.tell()
         self.out.seek(0)

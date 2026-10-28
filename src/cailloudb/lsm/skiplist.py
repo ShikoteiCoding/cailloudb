@@ -1,13 +1,13 @@
 import random
 from typing import Iterator
 
-from constants import (
+from custom_types import MemTableEntry
+from lsm.utils import build_internal_key
+from settings import (
     INTERNAL_KEY_LEN_METADATA,
     INTERNAL_KEY_MAX_SEQ_NUM,
     TOMBSTONE,
 )
-from custom_types import MemTableEntry
-from lsm.utils import build_internal_key
 
 
 class _SkipNode:
