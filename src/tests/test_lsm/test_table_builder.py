@@ -148,13 +148,13 @@ def test_table_builder_finish_state_transition_and_file_layout():
 
 
 def test_table_builder_finish_state_transition_and_file_layout_durable(tmp_path: Path):
-    durable_settings = Settings(default_sstable_dir=tmp_path)
+    durable_settings = Settings()
 
     table_builder = TableBuilder(
         file_id=1,
         sstable_block_default_size=SSTABLE_BLOCK_DEFAULT_SIZE,
         durable_sstable=True,
-        sstable_dir=durable_settings.default_sstable_dir,
+        sstable_dir=tmp_path,
     )
     key_1 = build_internal_key(b"apple", 1, False)
     key_2 = build_internal_key(b"banana", 2, False)
@@ -199,7 +199,7 @@ def test_table_builder_finish_state_transition_and_file_layout_durable(tmp_path:
 
 
 def test_table_builder_durable_and_inmemory_produce_identical_bytes(tmp_path: Path):
-    durable_settings = Settings(default_sstable_dir=tmp_path)
+    durable_settings = Settings()
 
     records = [
         (build_internal_key(b"apple", 3, False), b"red"),
@@ -216,7 +216,7 @@ def test_table_builder_durable_and_inmemory_produce_identical_bytes(tmp_path: Pa
         file_id=99,
         sstable_block_default_size=SSTABLE_BLOCK_DEFAULT_SIZE,
         durable_sstable=True,
-        sstable_dir=durable_settings.default_sstable_dir,
+        sstable_dir=tmp_path,
     )
 
     for internal_key, value in records:
@@ -263,7 +263,7 @@ def test_write_iterator_to_sstables_inmemory_write_returns(
 def test_write_iterator_to_sstables_durable_write_returns(
     tmp_path: Path,
 ):
-    durable_settings = Settings(default_sstable_dir=tmp_path)
+    durable_settings = Settings()
 
     memtable = MemTable(Settings().sstable_max_file_size)
     memtable.insert(key=b"carrot", seq_num=1, value=b"orange")
@@ -276,7 +276,7 @@ def test_write_iterator_to_sstables_durable_write_returns(
         SSTABLE_MAX_FILE_SIZE,
         SSTABLE_BLOCK_DEFAULT_SIZE,
         True,
-        durable_settings.default_sstable_dir,
+        tmp_path,
     )[0]
 
     assert sstable.__class__.__name__ == "DurableSSTable"
@@ -322,7 +322,7 @@ def test_write_iterator_to_sstables_inmemory_write_sstable(memtable: MemTable):
 def test_write_iterator_to_sstables_durable_write_sstable(
     memtable: MemTable, tmp_path: Path
 ):
-    durable_settings = Settings(default_sstable_dir=tmp_path)
+    durable_settings = Settings()
 
     memtable.insert(key=b"key1", seq_num=1, value=b"val1")
     memtable.insert(key=b"key2", seq_num=2, value=b"val2")
@@ -334,7 +334,7 @@ def test_write_iterator_to_sstables_durable_write_sstable(
         SSTABLE_MAX_FILE_SIZE,
         SSTABLE_BLOCK_DEFAULT_SIZE,
         True,
-        durable_settings.default_sstable_dir,
+        tmp_path,
     )[0]
 
     assert sstable.__class__.__name__ == "DurableSSTable"
@@ -399,8 +399,6 @@ def test_write_iterator_to_sstables_splits_when_builder_is_full():
 def test_write_iterator_to_sstables_durable_splits_when_builder_is_full(
     tmp_path: Path,
 ):
-    durable_settings = Settings(default_sstable_dir=tmp_path)
-
     records = iter(
         [
             (build_internal_key(b"a", 3, False), b"v1"),
@@ -415,7 +413,7 @@ def test_write_iterator_to_sstables_durable_splits_when_builder_is_full(
         max_file_size=1,  # Force small file size
         target_block_size=SSTABLE_BLOCK_DEFAULT_SIZE,
         durable_sstable=True,
-        sstable_dir=durable_settings.default_sstable_dir,
+        sstable_dir=tmp_path,
     )
 
     assert len(results) == 3
