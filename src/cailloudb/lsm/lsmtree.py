@@ -80,11 +80,12 @@ class LSMTree:
     #: Runtime settings
     _settings: Settings
 
-    def __init__(
-        self,
-        settings: Settings,
-    ):
+    #: Durability control for SSTables
+    durable_sstable: bool
+
+    def __init__(self, settings: Settings, durable_sstable: bool):
         self._settings = settings
+        self.durable_sstable = durable_sstable
 
         self.memtable_size = self._settings.memtable_max_bytes_size
         self.sstable_size = self._settings.sstable_max_file_size
@@ -95,8 +96,13 @@ class LSMTree:
         self._sstables_map = {}
         self._levels = [[] for _ in range(self.max_levels)]
         self._next_file_id = 1
+
+        self._compactor = Compactor(
+            self._settings.sstable_block_default_size,
+            self._settings.default_sstable_dir,
+            self.durable_sstable,
+        )
         self._wal = Wal(self._settings.default_wal_dir)
-        self._compactor = Compactor(self._settings.sstable_block_default_size)
         self._file_picker = FilePicker(
             self._levels,
             self.max_levels,
@@ -116,11 +122,31 @@ class LSMTree:
         self._mem_lock = threading.Lock()
         self._sst_lock = threading.Lock()
 
+        if self.durable_sstable:
+            (self._settings.default_sstable_dir).mkdir(parents=True, exist_ok=True)
+            self._next_file_id = self._recover_next_file_id(
+                self._settings.default_sstable_dir
+            )
+
         # XXX: Not pythonic, this should be moved to __aenter__
         # So that proper lifecycle can be handled async
         # (especially init / close)
         self._start_flush_worker()
         self._start_compaction_worker()
+
+    @staticmethod
+    def _recover_next_file_id(sstable_dir: Path) -> int:
+        """
+        Return a file id strictly greater than any existing .sst file name.
+        """
+        max_file_id = 0
+
+        for path in sstable_dir.glob("*.sst"):
+            stem = path.stem
+            if stem.isdigit():
+                max_file_id = max(max_file_id, int(stem))
+
+        return max_file_id + 1
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -345,6 +371,8 @@ class LSMTree:
                     file_id_generator=self.file_id_generator,
                     max_file_size=self.sstable_size,
                     target_block_size=self._settings.sstable_block_default_size,
+                    durable_sstable=self.durable_sstable,
+                    sstable_dir=self._settings.default_sstable_dir,
                 )
 
                 with self._sst_lock:

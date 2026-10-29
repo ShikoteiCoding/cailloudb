@@ -58,9 +58,7 @@ class InMemoryStore(BaseStore):
 
         self.settings = Settings()
 
-        self.__tree = LSMTree(
-            settings=self.settings,
-        )
+        self.__tree = LSMTree(settings=self.settings, durable_sstable=False)
         self._seq = SeqNum()
 
     async def get(self, key: bytes) -> bytes | None:
@@ -138,5 +136,5 @@ class InMemoryStore(BaseStore):
         return int(self._seq)
 
 
-class DiskStore:
+class DurableStore:
     NotImplementedError()
