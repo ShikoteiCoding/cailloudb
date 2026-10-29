@@ -1,5 +1,6 @@
 import os
 import zlib
+from io import BufferedWriter
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
@@ -43,14 +44,17 @@ class Wal:
     # TODO: replace 4-byte key/value lengths with a cheaper encoding
     # TODO: extend this header (for example a log number), same append/recover/roll
 
+    #: Effective WAL block size
+    _wal_block_size: int
+
     #: Active log number
     log_number: int
 
     #: Active log file path
     _path: Path
 
-    #: Effective WAL block size
-    _wal_block_size: int
+    #: Active log file buffered writter
+    _file: BufferedWriter
 
     def __init__(
         self,
@@ -62,8 +66,9 @@ class Wal:
         path.mkdir(parents=True, exist_ok=True)
         self.log_number = self._existing_number(path) + 1
         self._path = path / f"wal_{self.log_number:06d}.log"
+
         # init or crash, a new WAL file is always created
-        self._path.touch()
+        self._file = self._path.open("ab")
 
     def _existing_number(self, path: Path) -> int:
         highest = 0
@@ -99,7 +104,7 @@ class Wal:
             f.write(b"\x00" * leftover)
         f.write(self._build_physical_record(WAL_SINGLE_KIND, body))
 
-    def _append_batch(self, f, body: bytes) -> None:
+    def _append_batch(self, f: BufferedWriter, body: bytes) -> None:
         block_off = f.tell() % self._wal_block_size
         pos = 0
         n = len(body)
@@ -147,13 +152,12 @@ class Wal:
                 raise ValueError("wal single record exceeds block")
             is_batch = False
 
-        # TODO: keep one file open and append each record to it
-        with self._path.open("ab") as f:
-            if is_batch:
-                self._append_batch(f, body)
-            else:
-                self._append_single(f, body)
-            f.flush()
+        if is_batch:
+            self._append_batch(self._file, body)
+        else:
+            self._append_single(self._file, body)
+
+        self._file.flush()
 
     def _physical_records(self, data: bytes) -> Iterator[tuple[int, bytes]]:
         offset = 0
@@ -216,7 +220,8 @@ class Wal:
             seq_num += 1
 
     def records(self) -> Iterator[tuple[bytes, int, bytes]]:
-        """Yield each operation with its own sequence.
+        """
+        Yield each operation with its own sequence.
 
         A batch record stores the first operation's sequence.
         The next operation in that batch is that sequence plus one, and so on.
@@ -255,13 +260,22 @@ class Wal:
         Birth new WAL file, logs stay on disk.
         """
         # TODO: TTL and Size Limit, for point-in-time recovery
-        # only archive for now
         self.log_number += 1
-        self._path = self._path.parent / f"wal_{self.log_number:06d}.log"
-        self._path.touch()
+        new_path = self._path.parent / f"wal_{self.log_number:06d}.log"
+        new_path.touch()
+        new_file = new_path.open("ab")
+        self.close()
+        self._path = new_path
+        self._file = new_file
         return self.log_number
 
     def delete(self, log_number: int) -> None:
         file_path = self._path.parent / f"wal_{log_number:06d}.log"
         if file_path.exists():
             os.remove(file_path)
+
+    def close(self) -> None:
+        """
+        Close the active WAL file BufferedWriter.
+        """
+        self._file.close()

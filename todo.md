@@ -1,6 +1,5 @@
 We keep forgetting what we want to do and we too lazy to maintain a tool for it :)
 
-- Improve fileobj reference to avoid opening file for each write
 - Refactor the root dir for storage, adopt a hierarchical file system
 - Implement durable restart by replaying wal into the store
 - Introduce metadata manifest as (DB.name, DB.path) source of truth
@@ -16,7 +15,6 @@ We keep forgetting what we want to do and we too lazy to maintain a tool for it 
 - Optimize CPU-costly read/merge paths
 - Add retry strategy and raise on max retry
 - Replace naive compaction target-size heuristic
-- Rotate WAL files to wal-(n+1) instead of truncating a single file
 - Decide whether single-op WAL records should keep no batch header
 - Versioning the encoding protocols (wal, sst) for backward compatibility
 

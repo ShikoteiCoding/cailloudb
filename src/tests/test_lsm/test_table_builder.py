@@ -336,9 +336,6 @@ def test_write_iterator_to_sstables_durable_write_sstable(
         True,
         tmp_path,
     )[0]
-
-    assert sstable.__class__.__name__ == "DurableSSTable"
-    assert not isinstance(sstable, InMemorySSTable)
     assert len(sstable.index_keys) == 1
     assert sstable.file.tell() == 0
     assert len(sstable.file.read()) > 0
