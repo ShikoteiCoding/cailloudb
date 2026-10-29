@@ -62,7 +62,7 @@ class Wal:
         self._number = self._existing_number(path) + 1
         self._path = path / f"wal_{self._number:06d}.log"
         # init or crash, a new WAL file is always created
-        self._path.touch()
+        self._file = self._path.open("ab")
 
     def _existing_number(self, path: Path) -> int:
         highest = 0
@@ -146,13 +146,11 @@ class Wal:
                 raise ValueError("wal single record exceeds block")
             is_batch = False
 
-        # TODO: keep one file open and append each record to it
-        with self._path.open("ab") as f:
-            if is_batch:
-                self._append_batch(f, body)
-            else:
-                self._append_single(f, body)
-            f.flush()
+        if is_batch:
+            self._append_batch(self._file, body)
+        else:
+            self._append_single(self._file, body)
+        self._file.flush()
 
     def _physical_records(self, data: bytes) -> Iterator[tuple[int, bytes]]:
         offset = 0
@@ -253,6 +251,13 @@ class Wal:
         """Birth new WAL file, logs stay on disk"""
         # TODO: TTL and Size Limit, for point-in-time recovery
         # only archive for now
+        path = self._path.parent / f"wal_{self._number + 1:06d}.log"
+        new_file = path.open("ab")
+        self.close()
         self._number += 1
-        self._path = self._path.parent / f"wal_{self._number:06d}.log"
-        self._path.touch()
+        self._path = path
+        self._file = new_file
+
+    def close(self) -> None:
+        """Close the active WAL file"""
+        self._file.close()
