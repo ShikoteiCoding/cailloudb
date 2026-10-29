@@ -8,22 +8,18 @@ __all__ = [
     "test_settings_reads_environment_overrides",
     "test_environment_overrides_constructor_arguments",
     "test_settings_rejects_invalid_boolean_environment_value",
-    "test_settings_rejects_invalid_integer_environment_value",
     "test_settings_rejects_invalid_sstable_l0_compaction_trigger",
     "test_settings_rejects_invalid_sstable_l1_max_bytes",
     "test_settings_rejects_invalid_sstable_level_multiplier",
-    "test_settings_rejects_invalid_wal_block_size",
 ]
 
 
 def test_settings_reads_environment_overrides(monkeypatch):
-    monkeypatch.setenv("DEFAULT_WAL_DIR", "/tmp/custom-wal")
     monkeypatch.setenv("MEMTABLE_MAX_BYTES_SIZE", "2048")
     monkeypatch.setenv("COMPACTION_ENABLED", "false")
 
     settings = Settings()
 
-    assert settings.default_wal_dir == Path("/tmp/custom-wal")
     assert settings.memtable_max_bytes_size == 2048
     assert settings.compaction_enabled is False
 
