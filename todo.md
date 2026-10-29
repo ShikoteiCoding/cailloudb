@@ -9,6 +9,8 @@ We keep forgetting what we want to do and we too lazy to maintain a tool for it 
 - Implement last active snapshot guardrail during compaction
 - Drop tombstones (hard delete) on last level during compaction
 - Implement bloom filter
+- SSTable Bloom filter blocks with a checksum
+- Add an explicit Bloom filter format version so hash, probing, and encoding changes preserve compatibility with existing SSTables
 - Solve memtable flush queuing concurrency issues
 - Optimize CPU-costly read/merge paths
 - Add retry strategy and raise on max retry
