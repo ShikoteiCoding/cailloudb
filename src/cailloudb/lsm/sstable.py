@@ -14,6 +14,7 @@ from constants import (
 )
 from custom_types import SSTableEntry
 from lsm.block import BlockReader
+from lsm.bloom_filter import BloomFilterReader
 from lsm.utils import build_internal_key, extract_from_internal_key
 
 
@@ -33,6 +34,9 @@ class SSTable:
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
+    #: Full-table filter of user keys, loaded alongside the sparse index.
+    bloom_filter: BloomFilterReader
+
     def __init__(self, file_id: int, file: io.BytesIO, path: Path):
         self.file_id = file_id
         self.file = file
@@ -45,10 +49,11 @@ class SSTable:
 
     def _load_index(self):
         """
-        Reads the footer and parses the index block into memory.
+        Reads the footer and loads the index and optional Bloom filter.
         """
         # Read footer
         self.file.seek(-SSTABLE_FOOTER_STRUCT.size, io.SEEK_END)
+        footer_offset = self.file.tell()
         footer_bytes = self.file.read(SSTABLE_FOOTER_STRUCT.size)
         index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(footer_bytes)
 
@@ -58,6 +63,13 @@ class SSTable:
         # Read index
         self.file.seek(index_offset)
         index_bytes = self.file.read(index_size)
+
+        # Older tables have no bytes between the index and footer. An empty
+        # filter makes every lookup fall through to the data blocks.
+        filter_size = footer_offset - (index_offset + index_size)
+        if filter_size < 0:
+            raise ValueError(f"Invalid Bloom filter bounds in SSTable: {self.path}")
+        self.bloom_filter = BloomFilterReader(self.file.read(filter_size))
 
         # 3. Parse Index Entries
         cursor = 0
@@ -100,6 +112,9 @@ class SSTable:
         """
         Get value or tombstone at or before `seq_num`.
         """
+        if not self.bloom_filter.may_find(key):
+            return None
+
         # Build a target internal key from key/seq_num pair
         # Passing "is_deleted" True to respect Value Type ordering
         target_internal_key = build_internal_key(key, seq_num, True)

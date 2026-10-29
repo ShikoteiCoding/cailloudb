@@ -1,6 +1,6 @@
 """
 Bloom filter (full filter, one per SSTable)
-    bit array][num_probes: 1 byte]
+    [bit array][num_probes: 1 byte]
 
 The filter is immutable once finished. After compaction (or any new
 SSTable) the builder is reset and a new array is allocated, because the
@@ -41,6 +41,7 @@ def _hash(data: bytes, seed: int) -> int:
         h ^= h >> _HASH_R
 
     return h
+
 
 def _num_probes_for(bits_per_key: int) -> int:
     # k = bits_per_key * ln(2) ≈ bits_per_key * 0.69, truncated
@@ -84,6 +85,11 @@ class BloomFilterBuilder:
         """
         self.hashes.append(_hash(key, _BLOOM_HASH_SEED))
 
+    def estimated_size(self) -> int:
+        """Return the encoded filter size, including the probe-count byte."""
+        bits = max(_MIN_FILTER_BITS, len(self.hashes) * self.bits_per_key)
+        return (bits + 7) // 8 + 1
+
     def write(self) -> bytes:
         """
         Pack the current set of keys into an immutable filter blob.
@@ -91,12 +97,7 @@ class BloomFilterBuilder:
         Encoding:
             [bit array][num_probes]
         """
-        n = len(self.hashes)
-        bits = n * self.bits_per_key
-        if bits < _MIN_FILTER_BITS:
-            bits = _MIN_FILTER_BITS
-
-        nbytes = (bits + 7) // 8
+        nbytes = self.estimated_size() - 1
         bits = nbytes * 8
         array = bytearray(nbytes)
 
@@ -125,6 +126,7 @@ class BloomFilterReader:
 
     The filter is immutable. False positives are possible; a negative
     result means the key is definitely not in this SSTable.
+    Missing or too-short filter data is treated as a possible match.
     """
 
     #: Packed filter blob
@@ -138,7 +140,7 @@ class BloomFilterReader:
 
     def __init__(self, filter_data: bytes):
         self.data = filter_data
-        if len(filter_data) < 2:
+        if len(filter_data) < _MIN_FILTER_BITS // 8 + 1:
             self.bits = 0
             self.num_probes = 0
             return
@@ -152,11 +154,11 @@ class BloomFilterReader:
 
         False means the key is definitely absent.
         """
-        if self.bits == 0 or len(self.data) < 2:
-            return False
+        if self.bits == 0:
+            return True
 
-        # k > 30 is reserved for newer encodings; treat as match
-        if self.num_probes > _MAX_PROBES:
+        # Unknown probe counts (including newer encodings) are treated as a match.
+        if not 1 <= self.num_probes <= _MAX_PROBES:
             return True
 
         array = self.data

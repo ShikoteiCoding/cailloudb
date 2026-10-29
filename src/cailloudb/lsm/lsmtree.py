@@ -158,7 +158,7 @@ class LSMTree:
 
         LSMTree is responsible for the tombstone logic.
         """
-        # TODO: implement bloom filter
+        # Each SSTable applies its Bloom filter before reading data blocks.
         # Assumptions
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check
