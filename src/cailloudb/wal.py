@@ -1,3 +1,4 @@
+import os
 import zlib
 from pathlib import Path
 from typing import AsyncIterator, Iterator
@@ -43,7 +44,7 @@ class Wal:
     # TODO: extend this header (for example a log number), same append/recover/roll
 
     #: Active log number
-    _number: int
+    log_number: int
 
     #: Active log file path
     _path: Path
@@ -59,8 +60,8 @@ class Wal:
 
         # create folder on disk
         path.mkdir(parents=True, exist_ok=True)
-        self._number = self._existing_number(path) + 1
-        self._path = path / f"wal_{self._number:06d}.log"
+        self.log_number = self._existing_number(path) + 1
+        self._path = path / f"wal_{self.log_number:06d}.log"
         # init or crash, a new WAL file is always created
         self._path.touch()
 
@@ -249,10 +250,18 @@ class Wal:
         for record in self.records():
             yield record
 
-    def roll(self):
-        """Birth new WAL file, logs stay on disk"""
+    def roll(self) -> int:
+        """
+        Birth new WAL file, logs stay on disk.
+        """
         # TODO: TTL and Size Limit, for point-in-time recovery
         # only archive for now
-        self._number += 1
-        self._path = self._path.parent / f"wal_{self._number:06d}.log"
+        self.log_number += 1
+        self._path = self._path.parent / f"wal_{self.log_number:06d}.log"
         self._path.touch()
+        return self.log_number
+
+    def delete(self, log_number: int) -> None:
+        file_path = self._path.parent / f"wal_{log_number:06d}.log"
+        if file_path.exists():
+            os.remove(file_path)

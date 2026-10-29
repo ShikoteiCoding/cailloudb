@@ -95,25 +95,10 @@ class LSMTree:
         self.sstable_size = self._settings.sstable_max_file_size
         self.max_levels = self._settings.sstable_max_levels
 
-        self._memtable = MemTable(max_bytes_size=self.memtable_size)
         self._immutable_memtables = []
         self._sstables_map = {}
         self._levels = [[] for _ in range(self.max_levels)]
         self._next_file_id = 1
-
-        self._compactor = Compactor(
-            self._settings.sstable_block_default_size,
-            self._path,
-            self._durable_sstable,
-        )
-        self._wal = Wal(self._path)
-        self._file_picker = FilePicker(
-            self._levels,
-            self.max_levels,
-            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
-            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
-            sstable_level_multiplier=self._settings.sstable_level_multiplier,
-        )
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None
@@ -129,11 +114,32 @@ class LSMTree:
         if self._durable_sstable:
             self._next_file_id = self._recover_next_file_id(self._path)
 
+        self.init()
+
         # XXX: Not pythonic, this should be moved to __aenter__
         # So that proper lifecycle can be handled async
         # (especially init / close)
         self._start_flush_worker()
         self._start_compaction_worker()
+
+    def init(self):
+        self._wal = Wal(self._path)
+        self._memtable = MemTable(
+            max_bytes_size=self.memtable_size, log_number=self._wal.log_number
+        )
+        self._compactor = Compactor(
+            self._settings.sstable_block_default_size,
+            self._path,
+            self._durable_sstable,
+        )
+
+        self._file_picker = FilePicker(
+            self._levels,
+            self.max_levels,
+            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
+            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
+            sstable_level_multiplier=self._settings.sstable_level_multiplier,
+        )
 
     @staticmethod
     def _recover_next_file_id(sstable_dir: Path) -> int:
@@ -332,9 +338,11 @@ class LSMTree:
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
             self._flush_queue.put(self._memtable)
-            self._memtable = MemTable(max_bytes_size=self.memtable_size)
             if self._wal is not None:
-                self._wal.roll()
+                log_number = self._wal.roll()
+            self._memtable = MemTable(
+                max_bytes_size=self.memtable_size, log_number=log_number
+            )
 
     def file_id_generator(self) -> int:
         """
@@ -380,8 +388,12 @@ class LSMTree:
                     for sstable, file_metadata in generated_ssstables:
                         self._sstables_map[file_metadata["file_id"]] = sstable
                         self._levels[0].append(file_metadata)
-                        with self._mem_lock:
-                            self._immutable_memtables.remove(memtable)
+
+                with self._mem_lock:
+                    self._immutable_memtables.remove(memtable)
+
+                if self._wal and memtable.log_number:
+                    self._wal.delete(memtable.log_number)
 
                 self._flush_queue.task_done()
             except Exception:

@@ -32,7 +32,7 @@ __all__ = [
     "test_lsmtree_scan_max_seq",
     "test_lsmtree_scan_iterator_agg_break",
     "test_lsmtree_scan_future_seq_continue",
-    "test_rotate_clears_wal_before_flush",
+    "test_rotate_deletes_sealed_wal_after_flush",
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
     "test_lsmtree_flush_worker_exception_path",
@@ -602,13 +602,18 @@ def test_lsmtree_scan_future_seq_continue(
 
 
 @pytest.mark.asyncio
-async def test_rotate_clears_wal_before_flush(tmp_path: Path):
+async def test_rotate_deletes_sealed_wal_after_flush(tmp_path: Path):
     settings = _isolated_settings(
         memtable_max_bytes_size=10,  # should be full with one record
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
+    sealed = tmp_path / "wal_000001.log"
+    assert sealed.exists()
+    assert sealed.stat().st_size == 0
+
     await lsmtree.put(b"key1", 0, b"val1")
+
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -616,8 +621,8 @@ async def test_rotate_clears_wal_before_flush(tmp_path: Path):
         )
     )
 
-    sealed = tmp_path / "wal_000001.log"
-    assert sealed.stat().st_size > 0
+    # Flush worker owns lifecycle of sealed WAL files and deletes the flushed log.
+    assert not sealed.exists()
     assert lsmtree._wal is not None
     assert lsmtree._wal._path.name == "wal_000002.log"
     assert lsmtree._wal._path.stat().st_size == 0
