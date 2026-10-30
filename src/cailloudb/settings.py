@@ -47,8 +47,6 @@ class Settings:
 
     # Durability
     wal_enabled: bool = True
-    default_wal_dir: Path = Path("/tmp/cailloudb-data") / "wal"
-    default_sstable_dir: Path = Path("/tmp/cailloudb-data") / "sstables"
 
     # Memory & Buffering
     memtable_max_bytes_size: int = 32 * 1024 * 1024  # 32 MB

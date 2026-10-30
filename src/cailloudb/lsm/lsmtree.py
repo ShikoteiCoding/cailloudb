@@ -81,11 +81,15 @@ class LSMTree:
     _settings: Settings
 
     #: Durability control for SSTables
-    durable_sstable: bool
+    _durable_sstable: bool
 
-    def __init__(self, settings: Settings, durable_sstable: bool):
+    #: Path to metadata
+    _path: Path
+
+    def __init__(self, settings: Settings, durable_sstable: bool, path: Path):
         self._settings = settings
-        self.durable_sstable = durable_sstable
+        self._durable_sstable = durable_sstable
+        self._path = path
 
         self.memtable_size = self._settings.memtable_max_bytes_size
         self.sstable_size = self._settings.sstable_max_file_size
@@ -99,10 +103,10 @@ class LSMTree:
 
         self._compactor = Compactor(
             self._settings.sstable_block_default_size,
-            self._settings.default_sstable_dir,
-            self.durable_sstable,
+            self._path,
+            self._durable_sstable,
         )
-        self._wal = Wal(self._settings.default_wal_dir)
+        self._wal = Wal(self._path)
         self._file_picker = FilePicker(
             self._levels,
             self.max_levels,
@@ -122,11 +126,8 @@ class LSMTree:
         self._mem_lock = threading.Lock()
         self._sst_lock = threading.Lock()
 
-        if self.durable_sstable:
-            (self._settings.default_sstable_dir).mkdir(parents=True, exist_ok=True)
-            self._next_file_id = self._recover_next_file_id(
-                self._settings.default_sstable_dir
-            )
+        if self._durable_sstable:
+            self._next_file_id = self._recover_next_file_id(self._path)
 
         # XXX: Not pythonic, this should be moved to __aenter__
         # So that proper lifecycle can be handled async
@@ -371,8 +372,8 @@ class LSMTree:
                     file_id_generator=self.file_id_generator,
                     max_file_size=self.sstable_size,
                     target_block_size=self._settings.sstable_block_default_size,
-                    durable_sstable=self.durable_sstable,
-                    sstable_dir=self._settings.default_sstable_dir,
+                    durable_sstable=self._durable_sstable,
+                    sstable_dir=self._path,
                 )
 
                 with self._sst_lock:
