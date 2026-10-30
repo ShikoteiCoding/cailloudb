@@ -28,9 +28,11 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
-    memtable_size: int
-    sstable_size: int
-    max_levels: int
+    #: Generic configurations
+    _memtable_size: int
+    _sstable_size: int
+    _max_levels: int
+    _wal_enabled: bool
 
     #: Active memtable instance for in-memory O(1) writes
     _memtable: MemTable
@@ -91,29 +93,15 @@ class LSMTree:
         self._durable_sstable = durable_sstable
         self._path = path
 
-        self.memtable_size = self._settings.memtable_max_bytes_size
-        self.sstable_size = self._settings.sstable_max_file_size
-        self.max_levels = self._settings.sstable_max_levels
+        self._wal_enabled = self._settings.wal_enabled
+        self._memtable_size = self._settings.memtable_max_bytes_size
+        self._sstable_size = self._settings.sstable_max_file_size
+        self._max_levels = self._settings.sstable_max_levels
 
-        self._memtable = MemTable(max_bytes_size=self.memtable_size)
         self._immutable_memtables = []
         self._sstables_map = {}
-        self._levels = [[] for _ in range(self.max_levels)]
+        self._levels = [[] for _ in range(self._max_levels)]
         self._next_file_id = 1
-
-        self._compactor = Compactor(
-            self._settings.sstable_block_default_size,
-            self._path,
-            self._durable_sstable,
-        )
-        self._wal = Wal(self._path)
-        self._file_picker = FilePicker(
-            self._levels,
-            self.max_levels,
-            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
-            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
-            sstable_level_multiplier=self._settings.sstable_level_multiplier,
-        )
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None
@@ -129,11 +117,37 @@ class LSMTree:
         if self._durable_sstable:
             self._next_file_id = self._recover_next_file_id(self._path)
 
+        self.init()
+
         # XXX: Not pythonic, this should be moved to __aenter__
         # So that proper lifecycle can be handled async
         # (especially init / close)
         self._start_flush_worker()
         self._start_compaction_worker()
+
+    def init(self):
+        if self._wal_enabled:
+            self._wal = Wal(self._path)
+            self._memtable = MemTable(
+                max_bytes_size=self._memtable_size, log_number=self._wal.log_number
+            )
+        else:
+            self._wal = None
+            self._memtable = MemTable(max_bytes_size=self._memtable_size)
+
+        self._compactor = Compactor(
+            self._settings.sstable_block_default_size,
+            self._path,
+            self._durable_sstable,
+        )
+
+        self._file_picker = FilePicker(
+            self._levels,
+            self._max_levels,
+            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
+            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
+            sstable_level_multiplier=self._settings.sstable_level_multiplier,
+        )
 
     @staticmethod
     def _recover_next_file_id(sstable_dir: Path) -> int:
@@ -153,7 +167,7 @@ class LSMTree:
         """
         Put a key-value pair into the currently active memtable.
         """
-        if self._wal is not None:
+        if self._wal is not None and self._wal_enabled:
             self._wal.append(key, seq_num, value)
         self._insert(key, seq_num, value)
 
@@ -161,7 +175,7 @@ class LSMTree:
         """
         Syntactic sugar to put a tombstone marker.
         """
-        if self._wal is not None:
+        if self._wal is not None and self._wal_enabled:
             self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
 
@@ -172,7 +186,7 @@ class LSMTree:
         Returns how many operations were applied.
         """
         batch.sync_header(seq_num)
-        if self._wal is not None:
+        if self._wal is not None and self._wal_enabled:
             self._wal.append(batch, seq_num)
         applied = 0
         for key, value in batch:
@@ -332,9 +346,13 @@ class LSMTree:
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
             self._flush_queue.put(self._memtable)
-            self._memtable = MemTable(max_bytes_size=self.memtable_size)
             if self._wal is not None:
-                self._wal.roll()
+                log_number = self._wal.roll()
+            else:
+                log_number = None
+            self._memtable = MemTable(
+                max_bytes_size=self._memtable_size, log_number=log_number
+            )
 
     def file_id_generator(self) -> int:
         """
@@ -370,7 +388,7 @@ class LSMTree:
                 generated_ssstables = write_iterator_to_sstables(
                     iterator=memtable.__iter__(),
                     file_id_generator=self.file_id_generator,
-                    max_file_size=self.sstable_size,
+                    max_file_size=self._sstable_size,
                     target_block_size=self._settings.sstable_block_default_size,
                     durable_sstable=self._durable_sstable,
                     sstable_dir=self._path,
@@ -380,8 +398,12 @@ class LSMTree:
                     for sstable, file_metadata in generated_ssstables:
                         self._sstables_map[file_metadata["file_id"]] = sstable
                         self._levels[0].append(file_metadata)
-                        with self._mem_lock:
-                            self._immutable_memtables.remove(memtable)
+
+                with self._mem_lock:
+                    self._immutable_memtables.remove(memtable)
+
+                if self._wal and memtable.log_number:
+                    self._wal.delete(memtable.log_number)
 
                 self._flush_queue.task_done()
             except Exception:
@@ -432,7 +454,7 @@ class LSMTree:
             self._compactor.compact(
                 sstables_to_merge=input_sstables,
                 file_id_generator=self.file_id_generator,  # XXX: resolve concurrency with flush
-                level_sstable_size=self.sstable_size
+                level_sstable_size=self._sstable_size
                 * target_level,  # XXX: naive heuristic
             ),
         )

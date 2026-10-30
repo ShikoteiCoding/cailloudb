@@ -17,6 +17,7 @@ from cailloudb.settings import TOMBSTONE, Settings
 __all__ = [
     "test_lsmtree_internals_iteratively_0_record_memtable",
     "test_lsmtree_internals_iteratively_1_records_memtables",
+    "test_lsmtree_functional_put_get_with_wal_enabled_or_disabled",
     "test_lsmtree_get_from_skiplist",
     "test_lsmtree_get_from_immutable_memtable",
     "test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest",
@@ -32,7 +33,7 @@ __all__ = [
     "test_lsmtree_scan_max_seq",
     "test_lsmtree_scan_iterator_agg_break",
     "test_lsmtree_scan_future_seq_continue",
-    "test_rotate_clears_wal_before_flush",
+    "test_rotate_deletes_sealed_wal_after_flush",
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
     "test_lsmtree_flush_worker_exception_path",
@@ -58,8 +59,26 @@ def _wait_for_condition(predicate, timeout_s: float = 2.0) -> None:
 
 
 def _isolated_settings(**overrides) -> Settings:
+    explicit_defaults = {
+        # Durability
+        "wal_enabled": True,
+        # Memory & Buffering
+        "memtable_max_bytes_size": 32 * 1024 * 1024,
+        "sstable_block_default_size": 4096,
+        # SSTable & Compaction Limits
+        "sstable_max_file_size": 64 * 1024 * 1024,
+        "sstable_max_levels": 7,
+        "sstable_l0_compaction_trigger": 4,
+        "sstable_l1_max_bytes": 10 * 1024 * 1024,
+        "sstable_level_multiplier": 10,
+        # Background processes
+        "flush_enabled": True,
+        "compaction_enabled": True,
+        "compaction_interval_s": 10,
+    } | overrides
+
     return Settings(
-        **overrides,
+        **explicit_defaults,
     )
 
 
@@ -146,6 +165,28 @@ async def test_lsmtree_internals_iteratively_1_records_memtables(tmp_path: Path)
     assert len(lsmtree._memtable) == 1
     assert len(list(lsmtree._sstables_map.values())) == 1
     assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wal_enabled", [True, False])
+async def test_lsmtree_functional_put_get_with_wal_enabled_or_disabled(
+    tmp_path: Path, wal_enabled: bool
+):
+    lsmtree = LSMTree(_isolated_settings(wal_enabled=wal_enabled), False, tmp_path)
+    wal_log_1 = tmp_path / "wal_000001.log"
+
+    if wal_enabled:
+        assert wal_log_1.exists()
+    else:
+        assert not wal_log_1.exists()
+
+    await lsmtree.put(b"key1", 0, b"val1")
+
+    assert lsmtree.get(b"key1", 0) == b"val1"
+    if wal_enabled:
+        assert lsmtree._wal is not None
+    else:
+        assert lsmtree._wal is None
 
 
 @pytest.mark.asyncio
@@ -602,13 +643,18 @@ def test_lsmtree_scan_future_seq_continue(
 
 
 @pytest.mark.asyncio
-async def test_rotate_clears_wal_before_flush(tmp_path: Path):
+async def test_rotate_deletes_sealed_wal_after_flush(tmp_path: Path):
     settings = _isolated_settings(
         memtable_max_bytes_size=10,  # should be full with one record
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
+    sealed = tmp_path / "wal_000001.log"
+    assert sealed.exists()
+    assert sealed.stat().st_size == 0
+
     await lsmtree.put(b"key1", 0, b"val1")
+
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -616,8 +662,8 @@ async def test_rotate_clears_wal_before_flush(tmp_path: Path):
         )
     )
 
-    sealed = tmp_path / "wal_000001.log"
-    assert sealed.stat().st_size > 0
+    # Flush worker owns lifecycle of sealed WAL files and deletes the flushed log.
+    assert not sealed.exists()
     assert lsmtree._wal is not None
     assert lsmtree._wal._path.name == "wal_000002.log"
     assert lsmtree._wal._path.stat().st_size == 0
@@ -853,7 +899,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
     def mock_compact(sstables_to_merge, file_id_generator, level_sstable_size):
         assert sstables_to_merge == [source_sstable, target_sstable]
         assert file_id_generator() == 10
-        assert level_sstable_size == lsmtree.sstable_size
+        assert level_sstable_size == lsmtree._sstable_size
         return [(generated_sstable, generated_meta)]
 
     monkeypatch.setattr(lsmtree._file_picker, "pick_compaction_level", lambda: 0)
