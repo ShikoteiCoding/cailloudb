@@ -12,19 +12,19 @@ if TYPE_CHECKING:
 
 class _BaseStore(ABC):
     @abstractmethod
-    async def get(self, key: bytes) -> bytes: ...
+    async def get(self, key: bytes) -> bytes | None: ...
 
     @abstractmethod
-    async def get_at(self, key: bytes, *, seq_num: int) -> bytes: ...
+    async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None: ...
 
     @abstractmethod
-    async def put(self, key: bytes, val: bytes): ...
+    async def put(self, key: bytes, val: bytes) -> None: ...
 
     @abstractmethod
-    async def delete(self, key: bytes): ...
+    async def delete(self, key: bytes) -> None: ...
 
     @abstractmethod
-    async def write(self, batch: WriteBatch): ...
+    async def write(self, batch: WriteBatch) -> None: ...
 
     @abstractmethod
     def scan(
@@ -72,7 +72,7 @@ class BaseStore(_BaseStore):
         """
         return self._tree.get(key, seq_num)
 
-    async def put(self, key: bytes, value: bytes):
+    async def put(self, key: bytes, value: bytes) -> None:
         """
         Put a key/value pair.
         """
@@ -84,7 +84,7 @@ class BaseStore(_BaseStore):
         await self._tree.put(key, seq_num, value)
         self._seq.increment()
 
-    async def delete(self, key: bytes):
+    async def delete(self, key: bytes) -> None:
         """
         Delete a key.
 
@@ -94,7 +94,7 @@ class BaseStore(_BaseStore):
         await self._tree.delete(key, seq_num)
         self._seq.increment()
 
-    async def write(self, batch: WriteBatch):
+    async def write(self, batch: WriteBatch) -> None:
         """
         Write a batch of operations in a single atomic operation.
         """

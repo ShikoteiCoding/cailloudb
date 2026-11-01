@@ -346,10 +346,9 @@ class LSMTree:
         if self._memtable.is_full():
             self._immutable_memtables.append(self._memtable)
             self._flush_queue.put(self._memtable)
-            if self._wal is not None:
+            log_number = None
+            if self._wal_enabled and self._wal:
                 log_number = self._wal.roll()
-            else:
-                log_number = None
             self._memtable = MemTable(
                 max_bytes_size=self._memtable_size, log_number=log_number
             )

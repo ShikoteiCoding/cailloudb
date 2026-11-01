@@ -1,7 +1,5 @@
 We keep forgetting what we want to do and we too lazy to maintain a tool for it :)
 
-- Refactor the root dir for storage, adopt a hierarchical file system
-- Implement durable restart by replaying wal into the store
 - Introduce metadata manifest as (DB.name, DB.path) source of truth
 - Make SSTable recovered on DBReader instance
 - Make flush / compaction handle durable sstable lifecycle (deletion etc)
