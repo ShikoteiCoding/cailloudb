@@ -9,6 +9,7 @@ from settings import Settings
 if TYPE_CHECKING:
     from write_batch import WriteBatch
 
+
 class _BaseStore(ABC):
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
@@ -130,9 +131,7 @@ class BaseStore(_BaseStore):
         return int(self._seq)
 
 
-
 class InMemoryStore(BaseStore):
-
     def __init__(self, path: Path | str):
         self._settings = Settings()
 
@@ -146,7 +145,6 @@ class InMemoryStore(BaseStore):
 
 
 class DurableStore(BaseStore):
-
     def __init__(self, path: Path | str):
         self._settings = Settings()
 
