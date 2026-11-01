@@ -12,23 +12,24 @@ class MemTable(Iterator):
     """
 
     #: Skiplist tree underlying the memtable
-    skiplist: SkipList
+    _skiplist: SkipList
 
     #: Skiplist configuration for max size
-    max_bytes_size: int
+    _max_bytes_size: int
 
-    def __init__(
-        self,
-        max_bytes_size: int,
-    ):
-        self.skiplist = SkipList()
-        self.max_bytes_size = max_bytes_size
+    #: Log number reference if wal is enabled
+    log_number: int | None
+
+    def __init__(self, max_bytes_size: int, log_number: int | None = None):
+        self._skiplist = SkipList()
+        self._max_bytes_size = max_bytes_size
+        self.log_number = log_number
 
     def insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Append-only a new (key, value) pair.
         """
-        self.skiplist.insert(key, seq_num, value)
+        self._skiplist.insert(key, seq_num, value)
 
     def get(self, key: bytes, seq_num: int) -> MemTableEntry | None:
         """
@@ -38,7 +39,7 @@ class MemTable(Iterator):
             Returns None if key is not found.
             Returns the deletion marker as a valid value.
         """
-        return self.skiplist.get(key, seq_num)
+        return self._skiplist.get(key, seq_num)
 
     def scan(
         self, start_key: bytes | None, end_key: bytes | None, seq_num: int
@@ -52,7 +53,7 @@ class MemTable(Iterator):
             Doesn't yield None (it is not aware of out-of-range keys)
             Ordering guarantee as the SkipList property
         """
-        for entry in self.skiplist.scan(start_key, end_key, seq_num):
+        for entry in self._skiplist.scan(start_key, end_key, seq_num):
             yield entry
 
     def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
@@ -66,17 +67,17 @@ class MemTable(Iterator):
         Behavior:
             Ordering guarantee as the SkipList property
         """
-        return self.skiplist.__iter__()
+        return self._skiplist.__iter__()
 
     def __next__(self):
-        return self.skiplist.__next__()
+        return self._skiplist.__next__()
 
     @property
     def bytes_size(self) -> int:
-        return self.skiplist.bytes_size
+        return self._skiplist.bytes_size
 
     def is_full(self) -> bool:
-        return self.bytes_size >= self.max_bytes_size
+        return self.bytes_size >= self._max_bytes_size
 
     def __len__(self):
-        return len(self.skiplist)
+        return len(self._skiplist)
