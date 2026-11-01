@@ -12,14 +12,13 @@ from settings import (
 Bloom filter (full filter, one per SSTable)
     [bit array][num_probes: 1 byte]
 
-Workflow: hash each key once -> size the array -> set k bits per key.
-Reads use the same hash and delta to check those same k positions.
+Hash each key once -> size the array -> set k bits per key
+
+Reads use the same hash and delta to check those same k positions
 
 For n keys, the target array size is m = n * bits_per_key bits.
-With uniform hashing, the approximate false-positive rate is
-p = (1 - exp(-k * n / m)) ** k, minimized near k = (m / n) * ln(2).
-More bits per key reduce false positives; they remain possible, so a
-positive result must still be checked against the SSTable.
+
+More bits per key reduce false positives, so a positive result must still be checked against the SSTable
 
 The filter is immutable once finished
 After compaction (or any new SSTable) the builder is reset and a new array is allocated
@@ -27,14 +26,12 @@ After compaction (or any new SSTable) the builder is reset and a new array is al
 
 
 def _num_probes_for(bits_per_key: int) -> int:
-    # k = (m / n) * ln(2) = bits_per_key * ln(2), truncated to an integer.
     probes = int(bits_per_key * log(2))
-    # Always test at least one bit, and cap the work per key.
     return max(1, min(_MAX_PROBES, probes))
 
 
 def _probe(h: int, bits: int, num_probes: int):
-    # Derive a nonzero, odd step from h instead of hashing the key k times.
+    # bit rotation to generate a second hash, rotation guarante to be non-zero
     delta = ((h >> 17) | (h << 15) | 1) & _MASK32
     for _ in range(num_probes):
         yield h % bits
@@ -62,22 +59,22 @@ class BloomFilterBuilder:
 
     def add_key(self, key: bytes) -> None:
         """
-        Record a user key for the current SSTable's filter.
+        Record a key for the current SSTable's filter
         """
-        # Collect hashes first: the array size depends on the final key count.
+        # Collect hashes first, the array size depends on the final key count
         self.hashes.append(crc32(key))
 
     def estimated_size(self) -> int:
-        """Return the encoded filter size, including the probe-count byte."""
+        """Return the encoded filter size, including the probe-count byte"""
         total_keys = len(self.hashes)
-        # m = n * bits_per_key, with a minimum size for small or empty tables.
+        # m = n * bits_per_key, with a minimum size for small tables
         bits = max(_MIN_FILTER_BITS, total_keys * self.bits_per_key)
-        # Round up to whole bytes, then add the byte storing k.
+        # a whole number of bytes, plus one byte for the probe count
         return (bits + 7) // 8 + 1
 
     def write(self) -> bytes:
         """
-        Pack the current set of keys into an immutable filter blob.
+        Pack the current set of keys into an immutable filter
 
         Encoding:
             [bit array][num_probes]
@@ -94,12 +91,11 @@ class BloomFilterBuilder:
         array.append(self.num_probes)
         return bytes(array)
 
-    def finish(self) -> bytes:
+    def persist(self) -> bytes:
         """
-        Return the finalized filter and reset for the next SSTable.
+        Return the finalized filter and reset for the next SSTable
 
-        After compaction (or any new file) the key set changes, so the
-        bit array must be rebuilt from scratch.
+        After compaction (or any new file) the key set changes, so bit array must be rebuilt from scratch
         """
         filter_data = self.write()
         self.hashes = []
@@ -108,11 +104,10 @@ class BloomFilterBuilder:
 
 class BloomFilterReader:
     """
-    SSTable Bloom Filter Reader.
+    SSTable Bloom Filter Reader
 
-    The filter is immutable. False positives are possible; a negative
-    result means the key is definitely not in this SSTable.
-    Missing or too-short filter data is treated as a possible match.
+    The filter is immutable
+    Missing or too-short filter data is treated as a possible match
     """
 
     #: Packed filter blob
@@ -136,20 +131,20 @@ class BloomFilterReader:
 
     def may_find(self, key: bytes) -> bool:
         """
-        Return True if ``key`` may be present in the SSTable.
-
-        False means the key is definitely absent.
+        Return True if ``key`` may be present in the SSTable
+        False means the key is missing
         """
+
+        # insurance if filter is missing or too short, treat as a possible match
         if self.bits == 0:
             return True
 
-        # Unknown probe counts (including newer encodings) are treated as a match.
         if not 1 <= self.num_probes <= _MAX_PROBES:
             return True
 
         array = self.data
         h = crc32(key)
-        # One zero bit proves absence. All bits set only mean a possible match.
+        # One zero bit proves absence
         for bitpos in _probe(h, self.bits, self.num_probes):
             if (array[bitpos // 8] & (1 << (bitpos % 8))) == 0:
                 return False

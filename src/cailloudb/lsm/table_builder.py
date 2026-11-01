@@ -122,7 +122,7 @@ class TableBuilder:
         self.block_builder.add(internal_key, value)
         user_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
         if user_key != self._last_filter_key:
-            # Include tombstones so lookups can still find deletions.
+            # Include tombstones so lookups can still find deletions
             self.bloom_filter_builder.add_key(user_key)
             self._last_filter_key = user_key
 
@@ -160,9 +160,8 @@ class TableBuilder:
             )
         index_size = self.writer.tell() - index_offset
 
-        # Layout: [data blocks][index][Bloom filter][footer]. The filter starts
-        # at index_offset + index_size and ends at the unchanged footer.
-        self.writer.write(self.bloom_filter_builder.finish())
+        # persist the bloom filter
+        self.writer.write(self.bloom_filter_builder.persist())
 
         # Write footer
         self.writer.write(

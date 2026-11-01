@@ -52,12 +52,11 @@ class SSTable(abc.ABC):
         self.file.seek(index_offset)
         index_bytes = self.file.read(index_size)
 
-        # Older tables have no bytes between the index and footer. An empty
-        # filter makes every lookup fall through to the data blocks.
-        filter_size = footer_offset - (index_offset + index_size)
-        if filter_size < 0:
+        # filter makes every lookup fall through to blocks
+        bloom_filter_size = footer_offset - (index_offset + index_size)
+        if bloom_filter_size < 0:
             raise ValueError(f"Invalid Bloom filter bounds in SSTable: {self.path}")
-        self.bloom_filter = BloomFilterReader(self.file.read(filter_size))
+        self.bloom_filter = BloomFilterReader(self.file.read(bloom_filter_size))
 
         # 3. Parse Index Entries
         cursor = 0
