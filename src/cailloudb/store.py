@@ -1,3 +1,5 @@
+import fcntl
+import io
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
@@ -47,14 +49,49 @@ class BaseStore(_BaseStore):
     #: Runtime settings
     _settings: Settings
 
-    #: Path
+    #: Path & associated lock
     _path: Path
+    _lock_file: io.TextIOWrapper | None
 
     #: LSMTree-based storage
     _tree: LSMTree
 
-    def init(self):
+    def init(self) -> None:
         self._path.mkdir(parents=True, exist_ok=True)
+        self._acquire_file_lock()
+
+    def _acquire_file_lock(self) -> None:
+        """
+        Create a `LOCK` file in the store directory.
+        """
+        lock_file_path = self._path / "LOCK"
+        self._lock_file = open(lock_file_path, "a+")
+
+        try:
+            fcntl.flock(
+                self._lock_file.fileno(),
+                fcntl.LOCK_EX  # Only 1 writer
+                | fcntl.LOCK_NB,  # Explicit raise to exit other process
+            )
+        except IOError, OSError:
+            self._lock_file.close()
+            self._lock_file = None
+            raise RuntimeError(f"Database lock failed for `{self._path}`.")
+
+    def close(self) -> None:
+        """
+        Close the store gracefully.
+
+        - Release the lock file
+        """
+        if self._lock_file is not None:
+            try:
+                fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                self._lock_file.close()
+            except Exception:
+                pass
+            finally:
+                self._lock_file = None
 
     async def get(self, key: bytes) -> bytes | None:
         """
