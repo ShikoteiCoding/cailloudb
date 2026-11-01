@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
 from custom_types import SeqNum
@@ -6,8 +7,6 @@ from lsm.lsmtree import LSMTree
 from settings import Settings
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from write_batch import WriteBatch
 
 
@@ -16,7 +15,10 @@ class BaseStore(ABC):
     _seq: SeqNum
 
     #: Runtime settings
-    settings: Settings
+    _settings: Settings
+
+    #: Path
+    _path: Path
 
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
@@ -51,15 +53,19 @@ class InMemoryStore(BaseStore):
     #: LSMTree-based storage
     __tree: LSMTree
 
-    def __init__(
-        self,
-    ):
-        super().__init__()
+    def __init__(self, path: Path | str):
+        self._settings = Settings()
 
-        self.settings = Settings()
-
-        self.__tree = LSMTree(settings=self.settings, durable_sstable=False)
         self._seq = SeqNum()
+        self._path = Path(path)
+        self.__tree = LSMTree(
+            settings=self._settings, durable_sstable=False, path=self._path
+        )
+
+        self.init()
+
+    def init(self):
+        self._path.mkdir(parents=True, exist_ok=True)
 
     async def get(self, key: bytes) -> bytes | None:
         """

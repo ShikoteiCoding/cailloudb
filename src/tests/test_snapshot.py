@@ -1,5 +1,6 @@
+from pathlib import Path
+
 import pytest
-from conftest import TEST_DB
 
 from cailloudb import DbBuilder, InMemoryStore
 
@@ -14,9 +15,9 @@ __all__ = [
 
 
 @pytest.mark.asyncio
-async def test_snapshot_get(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder(TEST_DB, store).build()
+async def test_snapshot_get(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"key1", b"val1")
 
@@ -31,9 +32,9 @@ async def test_snapshot_get(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_delete_replay(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder(TEST_DB, store).build()
+async def test_snapshot_delete_replay(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"k", b"v1")
 
@@ -48,9 +49,9 @@ async def test_snapshot_delete_replay(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_reput(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder(TEST_DB, store).build()
+async def test_snapshot_reput(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"b", b"2")
 
@@ -65,9 +66,9 @@ async def test_snapshot_reput(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_snapshot_scan(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder(TEST_DB, store).build()
+async def test_snapshot_scan(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"a", b"1")
     await db.put(b"b", b"2")
@@ -86,9 +87,9 @@ async def test_snapshot_scan(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dbbuilder_snapshot(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder("test-db", store).build()
+async def test_dbbuilder_snapshot(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"k", b"v")
     snap = db.snapshot()
@@ -98,9 +99,9 @@ async def test_dbbuilder_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_same_range_semantics_on_snapshot(tmp_path):
-    store = InMemoryStore()
-    db = DbBuilder(TEST_DB, store).build()
+async def test_scan_same_range_semantics_on_snapshot(tmp_path: Path):
+    store = InMemoryStore(tmp_path)
+    db = DbBuilder(store).build()
 
     await db.put(b"b", b"2")
     await db.put(b"a", b"1")

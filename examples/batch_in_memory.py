@@ -4,8 +4,8 @@ from cailloudb import DbBuilder, InMemoryStore, WriteBatch
 
 
 async def main():
-    store = InMemoryStore()
-    builder = DbBuilder("test-db", store)
+    store = InMemoryStore("data/batch_in_memory")
+    builder = DbBuilder(store)
     db = builder.build()
 
     batch = WriteBatch()

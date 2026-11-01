@@ -8,23 +8,15 @@ if TYPE_CHECKING:
 
 
 class DbBuilder:
-    #: Name of the Db KV wrapper
-    name: str
-
     #: Store ref
     store: BaseStore
 
     #: Runtime settings
-    settings: Settings
+    _settings: Settings
 
-    def __init__(
-        self,
-        name: str,
-        store: BaseStore,
-    ):
-        self.name = name
+    def __init__(self, store: BaseStore, settings: Settings | None = None):
         self.store = store
-        self.settings = Settings()
+        self._settings = settings or Settings()
 
     def build(self) -> Db:
-        return Db(self.store, self.settings)
+        return Db(self.store)

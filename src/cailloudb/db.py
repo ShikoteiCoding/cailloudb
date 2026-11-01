@@ -4,7 +4,6 @@ from dbreader import DbReader
 from snapshot import DbSnapshot
 
 if TYPE_CHECKING:
-    from settings import Settings
     from store import BaseStore
     from write_batch import WriteBatch
 
@@ -13,12 +12,8 @@ class Db:
     #: Actual KV Store
     store: BaseStore
 
-    #: Runtime settings
-    settings: Settings
-
-    def __init__(self, store: BaseStore, settings: Settings):
+    def __init__(self, store: BaseStore):
         self.store = store
-        self.settings = settings
 
     def reader(self) -> DbReader:
         return DbReader(self.store)

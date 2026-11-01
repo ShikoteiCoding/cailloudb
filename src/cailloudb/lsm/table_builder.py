@@ -90,7 +90,6 @@ class TableBuilder:
             raw_stream = io.BytesIO()
             self.writer = io.BufferedWriter(raw_stream)
         else:
-            print("i m here somehow")
             self.file_name = f"{self.file_id:06d}.sst"
             self.writer = (self.dir / self.file_name).open(mode="xb")
 
