@@ -1,59 +1,41 @@
+from math import log
+from zlib import crc32
+
 from settings import (
     _DEFAULT_BITS_PER_KEY,
-    _BLOOM_HASH_SEED,
-    _HASH_M,
-    _HASH_R,
     _MASK32,
+    _MAX_PROBES,
     _MIN_FILTER_BITS,
-    _MAX_PROBES
 )
 
 """
 Bloom filter (full filter, one per SSTable)
     [bit array][num_probes: 1 byte]
 
+Workflow: hash each key once -> size the array -> set k bits per key.
+Reads use the same hash and delta to check those same k positions.
+
+For n keys, the target array size is m = n * bits_per_key bits.
+With uniform hashing, the approximate false-positive rate is
+p = (1 - exp(-k * n / m)) ** k, minimized near k = (m / n) * ln(2).
+More bits per key reduce false positives; they remain possible, so a
+positive result must still be checked against the SSTable.
+
 The filter is immutable once finished
 After compaction (or any new SSTable) the builder is reset and a new array is allocated
 """
 
-def _hash(data: bytes, seed: int) -> int:
-    n = len(data)
-    h = (seed ^ ((n * _HASH_M) & _MASK32)) & _MASK32
-
-    i = 0
-    aligned = n - (n % 4)
-    while i < aligned:
-        w = int.from_bytes(data[i : i + 4], "little")
-        h = (h + w) & _MASK32
-        h = (h * _HASH_M) & _MASK32
-        h ^= h >> 16
-        i += 4
-
-    leftover = n - i
-    if leftover:
-        if leftover >= 3:
-            h = (h + (data[i + 2] << 16)) & _MASK32
-        if leftover >= 2:
-            h = (h + (data[i + 1] << 8)) & _MASK32
-        h = (h + data[i]) & _MASK32
-        h = (h * _HASH_M) & _MASK32
-        h ^= h >> _HASH_R
-
-    return h
-
 
 def _num_probes_for(bits_per_key: int) -> int:
-    # k = bits_per_key * ln(2) ≈ bits_per_key * 0.69, truncated
-    probes = int(bits_per_key * 0.69)
-    if probes < 1:
-        return 1
-    if probes > _MAX_PROBES:
-        return _MAX_PROBES
-    return probes
+    # k = (m / n) * ln(2) = bits_per_key * ln(2), truncated to an integer.
+    probes = int(bits_per_key * log(2))
+    # Always test at least one bit, and cap the work per key.
+    return max(1, min(_MAX_PROBES, probes))
 
 
 def _probe(h: int, bits: int, num_probes: int):
-    delta = ((h >> 17) | ((h << 15) & _MASK32)) & _MASK32
+    # Derive a nonzero, odd step from h instead of hashing the key k times.
+    delta = ((h >> 17) | (h << 15) | 1) & _MASK32
     for _ in range(num_probes):
         yield h % bits
         h = (h + delta) & _MASK32
@@ -73,7 +55,7 @@ class BloomFilterBuilder:
     #: 32-bit hashes collected for the current SSTable
     hashes: list[int]
 
-    def __init__(self, bits_per_key: int = DEFAULT_BITS_PER_KEY):
+    def __init__(self, bits_per_key: int = _DEFAULT_BITS_PER_KEY):
         self.bits_per_key = bits_per_key
         self.num_probes = _num_probes_for(bits_per_key)
         self.hashes: list[int] = []
@@ -82,11 +64,15 @@ class BloomFilterBuilder:
         """
         Record a user key for the current SSTable's filter.
         """
-        self.hashes.append(_hash(key, _BLOOM_HASH_SEED))
+        # Collect hashes first: the array size depends on the final key count.
+        self.hashes.append(crc32(key))
 
     def estimated_size(self) -> int:
         """Return the encoded filter size, including the probe-count byte."""
-        bits = max(_MIN_FILTER_BITS, len(self.hashes) * self.bits_per_key)
+        total_keys = len(self.hashes)
+        # m = n * bits_per_key, with a minimum size for small or empty tables.
+        bits = max(_MIN_FILTER_BITS, total_keys * self.bits_per_key)
+        # Round up to whole bytes, then add the byte storing k.
         return (bits + 7) // 8 + 1
 
     def write(self) -> bytes:
@@ -100,6 +86,7 @@ class BloomFilterBuilder:
         bits = nbytes * 8
         array = bytearray(nbytes)
 
+        # Set the same k positions that the reader will test for each key.
         for h in self.hashes:
             for bitpos in _probe(h, bits, self.num_probes):
                 array[bitpos // 8] |= 1 << (bitpos % 8)
@@ -161,7 +148,8 @@ class BloomFilterReader:
             return True
 
         array = self.data
-        h = _hash(key, _BLOOM_HASH_SEED)
+        h = crc32(key)
+        # One zero bit proves absence. All bits set only mean a possible match.
         for bitpos in _probe(h, self.bits, self.num_probes):
             if (array[bitpos // 8] & (1 << (bitpos % 8))) == 0:
                 return False

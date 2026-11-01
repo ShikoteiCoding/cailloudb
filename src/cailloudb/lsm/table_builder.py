@@ -1,13 +1,15 @@
 import io
 from pathlib import Path
 from typing import Callable, Iterator
+
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
-from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from lsm.bloom_filter import BloomFilterBuilder
+from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
     STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
     STRUCT_SSTABLE_FOOTER,
     STRUCT_SSTABLE_INDEX_OFFSET_LEN,
 )
@@ -118,7 +120,7 @@ class TableBuilder:
         self.largest_key = internal_key
 
         self.block_builder.add(internal_key, value)
-        user_key = internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
+        user_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
         if user_key != self._last_filter_key:
             # Include tombstones so lookups can still find deletions.
             self.bloom_filter_builder.add_key(user_key)
@@ -160,7 +162,7 @@ class TableBuilder:
 
         # Layout: [data blocks][index][Bloom filter][footer]. The filter starts
         # at index_offset + index_size and ends at the unchanged footer.
-        self.out.write(self.bloom_filter_builder.finish())
+        self.writer.write(self.bloom_filter_builder.finish())
 
         # Write footer
         self.writer.write(

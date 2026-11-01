@@ -2,7 +2,7 @@ import abc
 import bisect
 import io
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Iterator
 
 from custom_types import SSTableEntry
 from lsm.block import BlockReader
@@ -41,6 +41,7 @@ class SSTable(abc.ABC):
         """
         # Read footer
         self.file.seek(-STRUCT_SSTABLE_FOOTER.size, io.SEEK_END)
+        footer_offset = self.file.tell()
         footer_bytes = self.file.read(STRUCT_SSTABLE_FOOTER.size)
         index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(footer_bytes)
 
