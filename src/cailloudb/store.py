@@ -9,17 +9,7 @@ from settings import Settings
 if TYPE_CHECKING:
     from write_batch import WriteBatch
 
-
-class BaseStore(ABC):
-    #: Sequence number for atomic write ops (put, del, merge)
-    _seq: SeqNum
-
-    #: Runtime settings
-    _settings: Settings
-
-    #: Path
-    _path: Path
-
+class _BaseStore(ABC):
     @abstractmethod
     async def get(self, key: bytes) -> bytes: ...
 
@@ -49,20 +39,18 @@ class BaseStore(ABC):
     async def latest_sequence_number(self) -> int: ...
 
 
-class InMemoryStore(BaseStore):
+class BaseStore(_BaseStore):
+    #: Sequence number for atomic write ops (put, del, merge)
+    _seq: SeqNum
+
+    #: Runtime settings
+    _settings: Settings
+
+    #: Path
+    _path: Path
+
     #: LSMTree-based storage
-    __tree: LSMTree
-
-    def __init__(self, path: Path | str):
-        self._settings = Settings()
-
-        self._seq = SeqNum()
-        self._path = Path(path)
-        self.__tree = LSMTree(
-            settings=self._settings, durable_sstable=False, path=self._path
-        )
-
-        self.init()
+    _tree: LSMTree
 
     def init(self):
         self._path.mkdir(parents=True, exist_ok=True)
@@ -73,7 +61,7 @@ class InMemoryStore(BaseStore):
 
         If the key is not found, return None.
         """
-        return self.__tree.get(key, int(self._seq))
+        return self._tree.get(key, int(self._seq))
 
     async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None:
         """
@@ -81,7 +69,7 @@ class InMemoryStore(BaseStore):
 
         If the key is not found, return None.
         """
-        return self.__tree.get(key, seq_num)
+        return self._tree.get(key, seq_num)
 
     async def put(self, key: bytes, value: bytes):
         """
@@ -92,7 +80,7 @@ class InMemoryStore(BaseStore):
         if not isinstance(key, bytes):
             raise KeyError("Type {} invalid for key.".format(type(key)))
         seq_num = int(self._seq)
-        await self.__tree.put(key, seq_num, value)
+        await self._tree.put(key, seq_num, value)
         self._seq.increment()
 
     async def delete(self, key: bytes):
@@ -102,7 +90,7 @@ class InMemoryStore(BaseStore):
         If the key doesn't exist, a deletion marker is created nonetheless.
         """
         seq_num = int(self._seq)
-        await self.__tree.delete(key, seq_num)
+        await self._tree.delete(key, seq_num)
         self._seq.increment()
 
     async def write(self, batch: WriteBatch):
@@ -114,7 +102,7 @@ class InMemoryStore(BaseStore):
         # - Failure to apply this method should be retried during system recovery (crash).
         # - MVCC safeguards readers consistency during write runtime.
         seq_num = int(self._seq)
-        applied = await self.__tree.write(batch, seq_num)
+        applied = await self._tree.write(batch, seq_num)
         for _ in range(applied):
             self._seq.increment()
 
@@ -126,7 +114,7 @@ class InMemoryStore(BaseStore):
         """
         Scan values between inclusive start and exclusive end.
         """
-        for key, value in self.__tree.scan(start, end, int(self._seq)):
+        for key, value in self._tree.scan(start, end, int(self._seq)):
             yield key, value
 
     async def scan_at(
@@ -135,12 +123,37 @@ class InMemoryStore(BaseStore):
         """
         Positional scan values between inclusive start and exclusive end.
         """
-        for key, value in self.__tree.scan(start, end, seq_num):
+        for key, value in self._tree.scan(start, end, seq_num):
             yield key, value
 
     async def latest_sequence_number(self) -> int:
         return int(self._seq)
 
 
-class DurableStore:
-    NotImplementedError()
+
+class InMemoryStore(BaseStore):
+
+    def __init__(self, path: Path | str):
+        self._settings = Settings()
+
+        self._seq = SeqNum()
+        self._path = Path(path)
+        self._tree = LSMTree(
+            settings=self._settings, durable_sstable=False, path=self._path
+        )
+
+        self.init()
+
+
+class DurableStore(BaseStore):
+
+    def __init__(self, path: Path | str):
+        self._settings = Settings()
+
+        self._seq = SeqNum()
+        self._path = Path(path)
+        self._tree = LSMTree(
+            settings=self._settings, durable_sstable=True, path=self._path
+        )
+
+        self.init()
