@@ -262,5 +262,5 @@ def test_skiplist_as_dummy_iterator():
     skiplist = SkipList()
     skiplist.insert(b"key1", 0, b"val1")
 
-    # XXX: dummy next function
+    # NOTE: dummy next function
     assert next(skiplist) == None

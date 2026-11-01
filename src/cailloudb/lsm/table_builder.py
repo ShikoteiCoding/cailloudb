@@ -1,26 +1,25 @@
 import io
 from pathlib import Path
 from typing import Callable, Iterator
-
-from constants import (
-    INTERNAL_KEY_LEN_STRUCT,
-    INTERNAL_KEY_METADATA_STRUCT,
-    SSTABLE_BLOCK_DEFAULT_SIZE,
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-)
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
+from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from lsm.bloom_filter import BloomFilterBuilder
-from lsm.sstable import InMemorySSTable, SSTable
+from settings import (
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_SSTABLE_FOOTER,
+    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
+)
 
 
 def write_iterator_to_sstables(
     iterator: Iterator[tuple[bytes, bytes]],
     file_id_generator: Callable[[], int],
     max_file_size: int,
-    in_memory: bool = True,
+    target_block_size: int,
+    durable_sstable: bool,
+    sstable_dir: Path | None = None,
 ) -> list[tuple[SSTable, FileMetaData]]:
     """
     Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
@@ -31,7 +30,12 @@ def write_iterator_to_sstables(
 
     for internal_key, value in iterator:
         if builder is None:
-            builder = TableBuilder(file_id=current_file_id, in_memory=in_memory)
+            builder = TableBuilder(
+                file_id=current_file_id,
+                sstable_block_default_size=target_block_size,
+                durable_sstable=durable_sstable,
+                sstable_dir=sstable_dir,
+            )
 
         builder.add(internal_key, value)
 
@@ -58,19 +62,38 @@ class TableBuilder:
         sstable, meta = builder.finish()
     """
 
+    #: File ID reference (unique)
+    file_id: int
+
+    #: Durable SSTable flag
+    durable_sstable: bool
+
+    #: Path to actual storage
+    path: Path
+
+    #: SSTable default block size
+    sstable_block_default_size: int
+
     def __init__(
         self,
         file_id: int,
-        in_memory: bool = True,
-        dir: Path | None = None,
-        block_size: int = SSTABLE_BLOCK_DEFAULT_SIZE,
+        sstable_block_default_size: int,
+        durable_sstable: bool,
+        sstable_dir: Path | None = None,
     ):
         self.file_id = file_id
-        self.in_memory = in_memory
-        self.dir = dir
-        self.block_size = block_size
+        self.durable_sstable = durable_sstable
+        self.dir = sstable_dir or Path()
+        self.block_size = sstable_block_default_size
 
-        self.out = io.BytesIO()
+        if not self.durable_sstable:
+            raw_stream = io.BytesIO()
+            self.writer = io.BufferedWriter(raw_stream)
+        else:
+            print("i m here somehow")
+            self.file_name = f"{self.file_id:06d}.sst"
+            self.writer = (self.dir / self.file_name).open(mode="xb")
+
         self.block_builder = BlockBuilder(self.block_size)
         self.bloom_filter_builder = BloomFilterBuilder()
         self._last_filter_key: bytes | None = None
@@ -103,7 +126,7 @@ class TableBuilder:
 
     def _flush_block(self):
         block_data, last_internal_key = self.block_builder.finalize()
-        self.out.write(block_data)
+        self.writer.write(block_data)
         block_len = len(block_data)
         self.index_entries.append((last_internal_key, self.current_offset, block_len))
         self.current_offset += block_len
@@ -126,25 +149,27 @@ class TableBuilder:
             self._flush_block()
 
         # Write index block
-        index_offset = self.out.tell()
+        index_offset = self.writer.tell()
         for last_key, block_offset, block_len in self.index_entries:
-            self.out.write(INTERNAL_KEY_LEN_STRUCT.pack(len(last_key)))
-            self.out.write(last_key)
-            self.out.write(
-                SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.pack(block_offset, block_len)
+            self.writer.write(STRUCT_INTERNAL_KEY_LEN.pack(len(last_key)))
+            self.writer.write(last_key)
+            self.writer.write(
+                STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
             )
-        index_size = self.out.tell() - index_offset
+        index_size = self.writer.tell() - index_offset
 
         # Layout: [data blocks][index][Bloom filter][footer]. The filter starts
         # at index_offset + index_size and ends at the unchanged footer.
         self.out.write(self.bloom_filter_builder.finish())
 
         # Write footer
-        self.out.write(
-            SSTABLE_FOOTER_STRUCT.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
+        self.writer.write(
+            STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
         )
-        file_size = self.out.tell()
-        self.out.seek(0)
+        file_size = self.writer.tell()
+        self.writer.flush()
+        raw = self.writer.detach()
+        raw.seek(0)
 
         meta = FileMetaData(
             file_id=self.file_id,
@@ -153,17 +178,16 @@ class TableBuilder:
             file_size=file_size,
         )
 
-        sstable = (
-            InMemorySSTable(
+        if self.durable_sstable:
+            sstable = DurableSSTable(
                 file_id=self.file_id,
-                file=self.out,
-                path=Path(f"{self.file_id:06d}.sst"),
+                dir=self.dir,
+                file_name=self.file_name,
             )
-            if self.in_memory
-            else SSTable(
+        else:
+            sstable = InMemorySSTable(
                 file_id=self.file_id,
-                file=self.out,
-                path=Path(f"{self.file_id:06d}.sst"),
+                file=io.BufferedReader(raw),
             )
-        )
+
         return sstable, meta

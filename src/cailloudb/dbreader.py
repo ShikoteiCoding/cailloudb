@@ -6,7 +6,6 @@ if TYPE_CHECKING:
 
 class DbReader:
     #: Read-only in-process view
-
     _store: BaseStore
 
     def __init__(self, store: BaseStore):

@@ -5,12 +5,6 @@ import time
 from pathlib import Path
 from typing import Callable, Iterator
 
-from constants import (
-    MEMTABLE_MAX_BYTES_SIZE,
-    SSTABLE_MAX_FILE_SIZE,
-    SSTABLE_MAX_LEVELS,
-    TOMBSTONE,
-)
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.compactor import Compactor
 from lsm.filepicker import FilePicker
@@ -18,6 +12,10 @@ from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetaData, write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
+from settings import (
+    TOMBSTONE,
+    Settings,
+)
 from wal import Wal
 from write_batch import WriteBatch
 
@@ -79,45 +77,76 @@ class LSMTree:
     #: Lock for sstables
     _sst_lock: threading.Lock
 
-    def __init__(
-        self,
-        memtable_size: int = MEMTABLE_MAX_BYTES_SIZE,
-        sstable_size: int = SSTABLE_MAX_FILE_SIZE,
-        max_levels: int = SSTABLE_MAX_LEVELS,
-        wal_path: Path | None = None,
-        flush_enabled: bool = True,
-        compaction_enabled: bool = True,
-        compaction_interval_s: int = 10,
-    ):
-        self.memtable_size = memtable_size
-        self.sstable_size = sstable_size
-        self.max_levels = max_levels
+    #: Runtime settings
+    _settings: Settings
 
-        self._memtable = MemTable(max_bytes_size=memtable_size)
+    #: Durability control for SSTables
+    durable_sstable: bool
+
+    def __init__(self, settings: Settings, durable_sstable: bool):
+        self._settings = settings
+        self.durable_sstable = durable_sstable
+
+        self.memtable_size = self._settings.memtable_max_bytes_size
+        self.sstable_size = self._settings.sstable_max_file_size
+        self.max_levels = self._settings.sstable_max_levels
+
+        self._memtable = MemTable(max_bytes_size=self.memtable_size)
         self._immutable_memtables = []
         self._sstables_map = {}
-        self._levels = [[] for _ in range(max_levels)]
+        self._levels = [[] for _ in range(self.max_levels)]
         self._next_file_id = 1
-        self._wal = Wal(wal_path) if wal_path is not None else None
-        self._compactor = Compactor()
-        self._file_picker = FilePicker(self._levels, self.max_levels)
+
+        self._compactor = Compactor(
+            self._settings.sstable_block_default_size,
+            self._settings.default_sstable_dir,
+            self.durable_sstable,
+        )
+        self._wal = Wal(self._settings.default_wal_dir)
+        self._file_picker = FilePicker(
+            self._levels,
+            self.max_levels,
+            sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
+            sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
+            sstable_level_multiplier=self._settings.sstable_level_multiplier,
+        )
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None
-        self._flush_enabled = flush_enabled
+        self._flush_enabled = self._settings.flush_enabled
         self._compaction_thread = None
-        self._compaction_enabled = compaction_enabled
-        self._compaction_interval_s = compaction_interval_s
+        self._compaction_enabled = self._settings.compaction_enabled
+        self._compaction_interval_s = self._settings.compaction_interval_s
 
         self._file_id_lock = threading.Lock()
         self._mem_lock = threading.Lock()
         self._sst_lock = threading.Lock()
+
+        if self.durable_sstable:
+            (self._settings.default_sstable_dir).mkdir(parents=True, exist_ok=True)
+            self._next_file_id = self._recover_next_file_id(
+                self._settings.default_sstable_dir
+            )
 
         # XXX: Not pythonic, this should be moved to __aenter__
         # So that proper lifecycle can be handled async
         # (especially init / close)
         self._start_flush_worker()
         self._start_compaction_worker()
+
+    @staticmethod
+    def _recover_next_file_id(sstable_dir: Path) -> int:
+        """
+        Return a file id strictly greater than any existing .sst file name.
+        """
+        max_file_id = 0
+
+        for path in sstable_dir.glob("*.sst"):
+            stem = path.stem
+            if stem.isdigit():
+                max_file_id = max(max_file_id, int(stem))
+
+        return max_file_id + 1
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -341,6 +370,9 @@ class LSMTree:
                     iterator=memtable.__iter__(),
                     file_id_generator=self.file_id_generator,
                     max_file_size=self.sstable_size,
+                    target_block_size=self._settings.sstable_block_default_size,
+                    durable_sstable=self.durable_sstable,
+                    sstable_dir=self._settings.default_sstable_dir,
                 )
 
                 with self._sst_lock:

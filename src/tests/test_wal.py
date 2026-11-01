@@ -3,16 +3,15 @@ import zlib
 import pytest
 
 from cailloudb import InMemoryStore, Wal, WriteBatch
-from cailloudb.constants import (
+from cailloudb.settings import (
+    STRUCT_WAL_CRC,
+    STRUCT_WAL_LEN,
+    STRUCT_WAL_PAYLOAD_LEN,
+    STRUCT_WAL_SEQ,
     WAL_BATCH_KIND_FIRST,
-    WAL_BATCH_KIND_FULL,
     WAL_BATCH_KIND_LAST,
     WAL_BATCH_KIND_MIDDLE,
     WAL_BLOCK_SIZE,
-    WAL_CRC_STRUCT,
-    WAL_LEN_STRUCT,
-    WAL_PAYLOAD_LEN_STRUCT,
-    WAL_SEQ_STRUCT,
     WAL_SINGLE_KIND,
 )
 
@@ -78,22 +77,21 @@ async def test_append_delete_then_recover(tmp_path):
 
 @pytest.mark.asyncio
 async def test_append_writes_length_prefixed_record(tmp_path):
-    path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"ab", 0, b"xyz")
 
     payload = (
-        WAL_SEQ_STRUCT.pack(0)
-        + WAL_LEN_STRUCT.pack(2)
-        + WAL_LEN_STRUCT.pack(3)
+        STRUCT_WAL_SEQ.pack(0)
+        + STRUCT_WAL_LEN.pack(2)
+        + STRUCT_WAL_LEN.pack(3)
         + b"ab"
         + b"xyz"
     )
     checksum = zlib.crc32(bytes([WAL_SINGLE_KIND]) + payload) & 0xFFFFFFFF
     assert wal._path.name == "wal_000001.log"
     assert wal._path.read_bytes() == (
-        WAL_CRC_STRUCT.pack(checksum)
-        + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+        STRUCT_WAL_CRC.pack(checksum)
+        + STRUCT_WAL_PAYLOAD_LEN.pack(len(payload))
         + bytes([WAL_SINGLE_KIND])
         + payload
     )
@@ -133,12 +131,11 @@ async def test_clear_drops_logged_records(tmp_path):
 
 @pytest.mark.asyncio
 async def test_reopen_opens_a_new_file(tmp_path):
-    folder = tmp_path / "wal"
-    wal = Wal(folder)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 0, b"1")
     previous = wal._path
 
-    reopened = Wal(folder)
+    reopened = Wal(tmp_path / "wal")
 
     assert previous.name == "wal_000001.log"
     assert previous.read_bytes()
@@ -160,13 +157,13 @@ async def test_append_after_clear(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_put_and_delete_append_to_wal(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
 
     await store.put(b"a", b"1")
     await store.put(b"b", b"2")
     await store.delete(b"a")
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -176,14 +173,14 @@ async def test_store_put_and_delete_append_to_wal(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_write_appends_one_batch_record(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     batch = WriteBatch()
     batch.put(b"a", b"1")
     batch.put(b"b", b"2")
     batch.delete(b"a")
     await store.write(batch)
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -193,7 +190,7 @@ async def test_store_write_appends_one_batch_record(tmp_path):
 
 @pytest.mark.asyncio
 async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
 
     await store.put(b"a", b"1")
     batch = WriteBatch()
@@ -202,7 +199,7 @@ async def test_store_mixes_batch_and_single_ops_in_the_wal(tmp_path):
     await store.write(batch)
     await store.put(b"c", b"3")
 
-    records = [record async for record in store._InMemoryStore__tree._wal.recover()]
+    records = [record async for record in store._InMemoryStore__tree._wal.recover()]  # type: ignore
     assert records == [
         (b"a", 0, b"1"),
         (b"b", 1, b"2"),
@@ -254,7 +251,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
     wal.append(b"b", 1, b"2")
     wal.append(b"a", 2, b"")
 
-    store = InMemoryStore(tmp_path / "wal")
+    store = InMemoryStore()
     async for key, _, val in wal.recover():
         if val:
             await store.put(key, val)
@@ -268,7 +265,7 @@ async def test_recover_replays_into_empty_store(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_returns_records_before_a_short_tail(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     wal.append(b"b", 2, b"2")
 
@@ -282,7 +279,7 @@ async def test_recover_returns_records_before_a_short_tail(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_returns_records_before_a_partial_header(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
 
     path = wal._path
@@ -295,15 +292,15 @@ async def test_recover_returns_records_before_a_partial_header(tmp_path):
 @pytest.mark.asyncio
 async def test_recover_rejects_unknown_record_kind(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
 
     kind = b"\xff"
     payload = b"\x00" * 24
     record_data = kind + payload
     checksum = zlib.crc32(record_data) & 0xFFFFFFFF
     frame = (
-        WAL_CRC_STRUCT.pack(checksum)
-        + WAL_PAYLOAD_LEN_STRUCT.pack(len(payload))
+        STRUCT_WAL_CRC.pack(checksum)
+        + STRUCT_WAL_PAYLOAD_LEN.pack(len(payload))
         + record_data
     )
     wal._path.write_bytes(frame)
@@ -315,7 +312,7 @@ async def test_recover_rejects_unknown_record_kind(tmp_path):
 @pytest.mark.asyncio
 async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     log = wal._path
     middle = log.stat().st_size
@@ -333,7 +330,7 @@ async def test_checksum_mismatch_before_end_of_file_raises(tmp_path):
 @pytest.mark.asyncio
 async def test_checksum_mismatch_on_the_last_record_stops(tmp_path):
     path = tmp_path / "wal"
-    wal = Wal(path)
+    wal = Wal(tmp_path / "wal")
     wal.append(b"a", 1, b"1")
     log = wal._path
     last = log.stat().st_size

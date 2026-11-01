@@ -1,7 +1,7 @@
 import struct
 from typing import Iterator
 
-from constants import TOMBSTONE
+from settings import TOMBSTONE
 
 
 class WriteBatch:

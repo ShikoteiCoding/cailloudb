@@ -1,8 +1,6 @@
 classDiagram
   class cailloudb {
   }
-  class constants {
-  }
   class custom_types {
   }
   class db {
@@ -33,6 +31,8 @@ classDiagram
   }
   class utils {
   }
+  class settings {
+  }
   class snapshot {
   }
   class store {
@@ -44,6 +44,7 @@ classDiagram
   cailloudb --> db
   cailloudb --> dbbuilder
   cailloudb --> dbreader
+  cailloudb --> settings
   cailloudb --> snapshot
   cailloudb --> store
   cailloudb --> wal
@@ -51,12 +52,14 @@ classDiagram
   db --> dbreader
   db --> snapshot
   dbbuilder --> db
-  store --> constants
+  dbbuilder --> settings
   store --> custom_types
   store --> lsmtree
-  wal --> constants
+  store --> settings
+  wal --> settings
   wal --> write_batch
-  write_batch --> constants
+  write_batch --> settings
+  db ..> settings
   db ..> store
   db ..> write_batch
   dbbuilder ..> store

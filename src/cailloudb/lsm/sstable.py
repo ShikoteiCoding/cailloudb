@@ -1,29 +1,30 @@
+import abc
 import bisect
 import io
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 
-from constants import (
-    INTERNAL_KEY_LEN_STRUCT,
-    INTERNAL_KEY_METADATA_STRUCT,
-    INTERNAL_KEY_VALUE_TYPE_DELETE,
-    SSTABLE_FOOTER_STRUCT,
-    SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT,
-    SSTABLE_MAGIC_NUMBER,
-    TOMBSTONE,
-)
 from custom_types import SSTableEntry
 from lsm.block import BlockReader
 from lsm.bloom_filter import BloomFilterReader
 from lsm.utils import build_internal_key, extract_from_internal_key
+from settings import (
+    INTERNAL_KEY_VALUE_TYPE_DELETE,
+    SSTABLE_MAGIC_NUMBER,
+    STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
+    STRUCT_SSTABLE_FOOTER,
+    STRUCT_SSTABLE_INDEX_OFFSET_LEN,
+    TOMBSTONE,
+)
 
 
-class SSTable:
+class SSTable(abc.ABC):
     #: File ID reference
     file_id: int
 
     #: Reference to file buffer object
-    file: io.BytesIO
+    file: io.BufferedReader
 
     #: Path to the file
     path: Path
@@ -34,31 +35,17 @@ class SSTable:
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
-    #: Full-table filter of user keys, loaded alongside the sparse index.
-    bloom_filter: BloomFilterReader
-
-    def __init__(self, file_id: int, file: io.BytesIO, path: Path):
-        self.file_id = file_id
-        self.file = file
-        self.path = path
-
-        self.index_keys = []
-        self.index_meta = []
-
-        self._load_index()
-
     def _load_index(self):
         """
         Reads the footer and loads the index and optional Bloom filter.
         """
         # Read footer
-        self.file.seek(-SSTABLE_FOOTER_STRUCT.size, io.SEEK_END)
-        footer_offset = self.file.tell()
-        footer_bytes = self.file.read(SSTABLE_FOOTER_STRUCT.size)
-        index_offset, index_size, magic = SSTABLE_FOOTER_STRUCT.unpack(footer_bytes)
+        self.file.seek(-STRUCT_SSTABLE_FOOTER.size, io.SEEK_END)
+        footer_bytes = self.file.read(STRUCT_SSTABLE_FOOTER.size)
+        index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(footer_bytes)
 
         if magic != SSTABLE_MAGIC_NUMBER:
-            raise ValueError(f"Invalid magic number in SSTable: {self.path}")
+            raise ValueError(f"Invalid magic number in SSTable: {self.file_id}")
 
         # Read index
         self.file.seek(index_offset)
@@ -75,18 +62,18 @@ class SSTable:
         cursor = 0
         while cursor < index_size:
             # Read internal key length
-            key_len = INTERNAL_KEY_LEN_STRUCT.unpack_from(index_bytes, cursor)[0]
-            cursor += INTERNAL_KEY_LEN_STRUCT.size
+            key_len = STRUCT_INTERNAL_KEY_LEN.unpack_from(index_bytes, cursor)[0]
+            cursor += STRUCT_INTERNAL_KEY_LEN.size
 
             # Read the actual key
             last_key = index_bytes[cursor : cursor + key_len]
             cursor += key_len
 
             # Read the data block offset and length
-            blk_offset, blk_len = SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.unpack_from(
+            blk_offset, blk_len = STRUCT_SSTABLE_INDEX_OFFSET_LEN.unpack_from(
                 index_bytes, cursor
             )
-            cursor += SSTABLE_INDEX_BLOCK_OFFSET_AND_LEN_STRUCT.size
+            cursor += STRUCT_SSTABLE_INDEX_OFFSET_LEN.size
 
             self.index_keys.append(last_key)
             self.index_meta.append((blk_offset, blk_len))
@@ -157,7 +144,7 @@ class SSTable:
             start_block_idx = 0
         else:
             target_internal_key = start_key + (
-                b"\x00" * INTERNAL_KEY_METADATA_STRUCT.size
+                b"\x00" * STRUCT_INTERNAL_KEY_METADATA.size
             )
             start_block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
 
@@ -171,7 +158,7 @@ class SSTable:
             block_reader = BlockReader(block_data)
 
             for table_internal_key, table_value in block_reader:
-                table_key = table_internal_key[: -INTERNAL_KEY_METADATA_STRUCT.size]
+                table_key = table_internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
 
                 # Continue if start_key is greater
                 if start_key is not None and table_key < start_key:
@@ -202,5 +189,25 @@ class InMemorySSTable(SSTable):
     In-memory SSTable for `cailloudb.store.InMemoryStore`
     """
 
-    def __init__(self, file_id: int, file: io.BytesIO, path: Path):
-        super().__init__(file_id, file, path)
+    def __init__(self, file_id: int, file: io.BufferedReader):
+        self.file_id = file_id
+        self.file = file
+
+        self.index_keys = []
+        self.index_meta = []
+
+        self._load_index()
+
+
+class DurableSSTable(SSTable):
+    """
+    Durable SSTable for `cailloudb.store.DurableSSTable`
+    """
+
+    def __init__(self, file_id: int, dir: Path, file_name: str):
+        self.file_id = file_id
+        self.index_keys = []
+        self.index_meta = []
+        self.file = (dir / file_name).open(mode="rb")
+
+        self._load_index()

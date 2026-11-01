@@ -1,21 +1,20 @@
+from settings import (
+    _DEFAULT_BITS_PER_KEY,
+    _BLOOM_HASH_SEED,
+    _HASH_M,
+    _HASH_R,
+    _MASK32,
+    _MIN_FILTER_BITS,
+    _MAX_PROBES
+)
+
 """
 Bloom filter (full filter, one per SSTable)
     [bit array][num_probes: 1 byte]
 
-The filter is immutable once finished. After compaction (or any new
-SSTable) the builder is reset and a new array is allocated, because the
-set of keys in the file has changed.
+The filter is immutable once finished
+After compaction (or any new SSTable) the builder is reset and a new array is allocated
 """
-
-DEFAULT_BITS_PER_KEY = 10
-# BloomHash seed
-_BLOOM_HASH_SEED = 0xBC9F1D34
-_HASH_M = 0xC6A4A793
-_HASH_R = 24
-_MASK32 = 0xFFFFFFFF
-_MIN_FILTER_BITS = 64
-_MAX_PROBES = 30
-
 
 def _hash(data: bytes, seed: int) -> int:
     n = len(data)

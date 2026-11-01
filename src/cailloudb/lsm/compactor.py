@@ -1,4 +1,5 @@
 import heapq
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
 from lsm.table_builder import write_iterator_to_sstables
@@ -13,6 +14,25 @@ class Compactor:
     """
     Compact multiple SSTables into a new level of SSTables.
     """
+
+    #: Target block size inside a sstable
+    sstable_block_default_size: int
+
+    #: SSTable root dir
+    sstable_root_dir: Path | None
+
+    #: SSTable durability flag
+    durable_sstable: bool
+
+    def __init__(
+        self,
+        sstable_block_default_size: int,
+        sstable_root_dir: Path | None,
+        durable_sstable: bool,
+    ):
+        self.sstable_block_default_size = sstable_block_default_size
+        self.sstable_root_dir = sstable_root_dir
+        self.durable_sstable = durable_sstable
 
     def compact(
         self,
@@ -30,7 +50,9 @@ class Compactor:
             self._deduplicate_iterator(merged_iterators),
             file_id_generator,
             level_sstable_size,
-            in_memory=True,
+            self.sstable_block_default_size,
+            self.durable_sstable,
+            self.sstable_root_dir,
         )
 
     def _deduplicate_iterator(
@@ -42,7 +64,7 @@ class Compactor:
         last_seen_key = None
 
         for internal_key, value in merged_stream:
-            key, _, value_type = extract_from_internal_key(internal_key)
+            key, _, _value_type = extract_from_internal_key(internal_key)
 
             # Drop old versions of the key
             # XXX: Implement a last active snapshot guardrail
