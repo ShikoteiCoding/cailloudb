@@ -1,4 +1,5 @@
 from cailloudb.lsm.filepicker import FilePicker
+from cailloudb.lsm.version import Version
 from cailloudb.settings import Settings
 
 __all__ = [
@@ -19,28 +20,28 @@ SSTABLE_L1_MAX_BYTES = settings.sstable_l1_max_bytes
 
 def test_file_picker_pick_compaction_level_returns_minus_one_when_max_levels_is_lt_2():
     levels = [[]]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=1,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    assert picker.pick_compaction_level() == -1
+    assert picker.pick_compaction_level(version) == -1
 
 
 def test_file_picker_pick_compaction_level_returns_minus_one_with_single_level():
     levels = [[]]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    assert picker.pick_compaction_level() == -1
+    assert picker.pick_compaction_level(version) == -1
 
 
 def test_file_picker_pick_compaction_level_returns_minus_one_below_l0_trigger():
@@ -67,15 +68,15 @@ def test_file_picker_pick_compaction_level_returns_minus_one_below_l0_trigger():
         ],
         [],
     ]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    assert picker.pick_compaction_level() == -1
+    assert picker.pick_compaction_level(version) == -1
 
 
 def test_file_picker_pick_compaction_level_returns_l1_on_size_overflow():
@@ -91,28 +92,28 @@ def test_file_picker_pick_compaction_level_returns_l1_on_size_overflow():
         ],
         [],
     ]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    assert picker.pick_compaction_level() == 1
+    assert picker.pick_compaction_level(version) == 1
 
 
 def test_file_picker_pick_compaction_files_empty_source_returns_empty_lists():
     levels = [[], [], []]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    source_metas, target_metas = picker.pick_compaction_files(1, 2)
+    source_metas, target_metas = picker.pick_compaction_files(1, 2, version)
 
     assert source_metas == []
     assert target_metas == []
@@ -120,15 +121,15 @@ def test_file_picker_pick_compaction_files_empty_source_returns_empty_lists():
 
 def test_file_picker_pick_compaction_files_l0_empty_source_returns_empty_lists():
     levels = [[], []]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    source_metas, target_metas = picker.pick_compaction_files(0, 1)
+    source_metas, target_metas = picker.pick_compaction_files(0, 1, version)
 
     assert source_metas == []
     assert target_metas == []
@@ -154,15 +155,15 @@ def test_file_picker_pick_compaction_files_non_l0_empty_source_returns_empty_lis
             }
         ],
     ]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    source_metas, target_metas = picker.pick_compaction_files(1, 2)
+    source_metas, target_metas = picker.pick_compaction_files(1, 2, version)
 
     assert source_metas == []
     assert target_metas == []
@@ -205,15 +206,14 @@ def test_file_picker_pick_compaction_files_non_l0_selects_overlapping_targets():
     ]
 
     levels = [[], source_level[:], target_level[:], []]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
-
-    source_metas, target_metas = picker.pick_compaction_files(1, 2)
+    source_metas, target_metas = picker.pick_compaction_files(1, 2, version)
 
     # For non-L0 levels only the first source file is selected.
     assert source_metas == [source_level[0]]
@@ -257,17 +257,17 @@ def test_file_picker_pick_compaction_level_and_files_for_l0():
         }
     ]
     levels = [level0[:], level1[:], []]
+    version = Version(levels)
     picker = FilePicker(
-        levels=levels,
         max_levels=7,
         sstable_l0_compaction_trigger=settings.sstable_l0_compaction_trigger,
         sstable_l1_max_bytes=settings.sstable_l1_max_bytes,
         sstable_level_multiplier=settings.sstable_level_multiplier,
     )
 
-    assert picker.pick_compaction_level() == 0
+    assert picker.pick_compaction_level(version) == 0
 
-    source_metas, target_metas = picker.pick_compaction_files(0, 1)
+    source_metas, target_metas = picker.pick_compaction_files(0, 1, version)
 
     assert source_metas == level0
     assert target_metas == level1
