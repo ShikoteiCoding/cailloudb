@@ -1,4 +1,4 @@
-We keep forgetting what we want to do and we too lazy to maintain a tool for it :)
+We keep forgetting what we want to do and we too lazy to maintain a tool for it :
 
 - Implement durable restart by replaying wal into the store
 - Make SSTable recovered on DBReader instance

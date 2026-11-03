@@ -14,7 +14,7 @@ from settings import TOMBSTONE
 
 class VersionEdit:
     """
-    Atomic metadata structural change of the LSMTree.
+    Atomic structural change of the LSMTree.
 
     Committed to MANIFEST changelog.
     """
@@ -69,25 +69,20 @@ class VersionEdit:
             log_number=data.get("log_number"),
         )
 
-    def __repr__(self) -> str:
-        return """
-        VersionEdit(deleted_files={}, added_files={}, next_file_id={}, log_number={})
-        """.format(
-            self.deleted_files, self.added_files, self.next_file_id, self.log_number
-        )
-
 
 class Version:
     #: List of levels of SSTable metadata
     #: l0 -> overlapping ranges, update history, ordered by seq_num
-    #: l{1...N} -> non overlapping ranges, no history, sorted by key
+    #: l{1...N} -> non overlapping ranges, no history, sorted by min key
     _levels: list[list[FileMetadata]]
 
     def __init__(self, levels: list[list[FileMetadata]]):
         self._levels = levels
 
-    def find_files_containing(self, key: bytes, seq_num: int) -> Iterator[FileMetadata]:
-
+    def find_files_containing(self, key: bytes) -> Iterator[FileMetadata]:
+        """
+        Find files likely to own the key.
+        """
         for level_idx, level_files in enumerate(self._levels):
             if not level_files:
                 continue
@@ -165,11 +160,10 @@ class VersionSet:
         levels = [[] for _ in range(max_levels)]
 
         if current_path.exists():
-            # levels = self._recover_from_manifest(max_levels)
-            # self._manifest_file = open(manifest_path, "ab")
-            # self._manifest_file_id
-            # TODO: handle recovery here
-            pass
+            levels = self._recover_from_manifest(max_levels)
+            self._manifest_file_id = self._read_current_manifest_id()
+            manifest_path = self._manifest_path_from_id(self._manifest_file_id)
+            self._manifest_file = open(manifest_path, "ab")
         else:
             self._create_initial_manifest(1)
 
@@ -206,9 +200,8 @@ class VersionSet:
         """
         self._manifest_file_id = starting_manifest_file_id
         manifest_path = self._path / f"MANIFEST-{self._manifest_file_id:06d}"
-        manifest_path.touch()
-
         current_path = self._path / "CURRENT"
+        manifest_path.touch()
         current_path.touch()
 
         with open(current_path, "wb") as current_f:
@@ -217,6 +210,14 @@ class VersionSet:
             os.fsync(current_f.fileno())
 
         self._manifest_file = open(manifest_path, "ab")
+
+    def _read_current_manifest_id(self) -> int:
+        current_path = self._path / "CURRENT"
+        current_data = current_path.read_text(encoding="utf-8").strip()
+        return int(current_data) if current_data else 1
+
+    def _manifest_path_from_id(self, manifest_id: int) -> Path:
+        return self._path / f"MANIFEST-{manifest_id:06d}"
 
     def log_and_apply(self, edit: VersionEdit, sstables: list[SSTable]) -> None:
         with self._version_lock:
@@ -264,13 +265,13 @@ class VersionSet:
         self._next_file_id = max(self._next_file_id, edit.next_file_id)
         return updated_levels
 
-    def _recover_from_manifest(self, max_levels) -> list[list[FileMetadata]]:
+    def _recover_from_manifest(self, max_levels: int) -> list[list[FileMetadata]]:
         levels = [[] for _ in range(max_levels)]
-        current = self._path / "CURRENT"
-        manifest = self._path / f"MANIFEST-{current:06d}"
 
-        # XXX: implement recovery here
-        with manifest.open("rb") as f:
+        manifest_id = self._read_current_manifest_id()
+        manifest_path = self._manifest_path_from_id(manifest_id)
+
+        with manifest_path.open("rb") as f:
             for line in f:
                 edit = VersionEdit.decode(line)
 
@@ -284,7 +285,7 @@ class VersionSet:
                     levels[level].append(file_meta)
                     file_id = file_meta["file_id"]
                     self._sstables_map[file_id] = DurableSSTable(
-                        file_id, self._path, f"{file_id:06d}"
+                        file_id, self._path, f"{file_id:06d}.sst"
                     )
 
                 self._next_file_id = max(self._next_file_id, edit.next_file_id)
@@ -293,7 +294,7 @@ class VersionSet:
 
     def get(self, key: bytes, seq_num: int) -> bytes | None:
         version = self._current_version
-        candidate_files = version.find_files_containing(key, seq_num)
+        candidate_files = version.find_files_containing(key)
 
         for file_meta in candidate_files:
             file_id = file_meta["file_id"]
