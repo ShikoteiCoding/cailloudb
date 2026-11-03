@@ -15,6 +15,10 @@ def _make_store(store_cls: StoreClass, tmp_path: Path):
 
 
 __all__ = [
+    "test_store_init_creates_directory_and_lock_file",
+    "test_store_close_releases_lock_and_is_idempotent",
+    "test_store_close_swallows_errors_if_lock_handle_already_closed",
+    "test_store_second_instantiation_raises_and_allows_clean_close",
     "test_store_get_never_raises",
     "test_store_get_at_never_raises",
     "test_store_delete_never_raises",
@@ -24,6 +28,70 @@ __all__ = [
     "test_put_rejects_none_value",
     "test_put_rejects_non_bytes_key",
 ]
+
+
+@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+def test_store_init_creates_directory_and_lock_file(
+    tmp_path: Path, store_cls: StoreClass
+):
+    store_path = tmp_path / "db" / "nested" / store_cls.__name__
+
+    store = store_cls(store_path)
+
+    assert store_path.exists()
+    assert store_path.is_dir()
+    assert (store_path / "LOCK").exists()
+    assert store._lock_file is not None
+
+
+@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+def test_store_close_releases_lock_and_is_idempotent(
+    tmp_path: Path, store_cls: StoreClass
+):
+    store = _make_store(store_cls, tmp_path)
+    lock_file = store._lock_file
+
+    assert lock_file is not None
+
+    store.close()
+
+    assert lock_file.closed
+    assert store._lock_file is None
+
+    store.close()
+    assert store._lock_file is None
+
+
+@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+def test_store_close_swallows_errors_if_lock_handle_already_closed(
+    tmp_path: Path, store_cls: StoreClass
+):
+    store = _make_store(store_cls, tmp_path)
+    lock_file = store._lock_file
+
+    assert lock_file is not None
+
+    # Simulate a corruption
+    # XXX: Cover with actual corruption scenarios
+    lock_file.close()
+
+    store.close()
+    assert store._lock_file is None
+
+
+@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+def test_store_second_instantiation_raises_and_allows_clean_close(
+    tmp_path: Path, store_cls: StoreClass
+):
+    store_path = tmp_path / store_cls.__name__
+    store = store_cls(store_path)
+
+    with pytest.raises(RuntimeError, match="Database lock failed"):
+        store_cls(store_path)
+
+    assert store._lock_file is not None
+    store.close()
+    assert store._lock_file is None
 
 
 @pytest.mark.asyncio
