@@ -29,11 +29,14 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
+    #: Runtime settings
+    _settings: Settings
+
     #: Generic configurations
     _memtable_size: int
     _sstable_size: int
-    _max_levels: int
     _wal_enabled: bool
+    _durable_sstable: bool
 
     #: Active memtable instance for in-memory O(1) writes
     _memtable: MemTable
@@ -68,15 +71,6 @@ class LSMTree:
     #: Lock for memory buffers
     _mem_lock: threading.Lock
 
-    #: Lock for sstables
-    _sst_lock: threading.Lock
-
-    #: Runtime settings
-    _settings: Settings
-
-    #: Durability control for SSTables
-    _durable_sstable: bool
-
     #: Path to metadata
     _path: Path
 
@@ -88,7 +82,6 @@ class LSMTree:
         self._wal_enabled = self._settings.wal_enabled
         self._memtable_size = self._settings.memtable_max_bytes_size
         self._sstable_size = self._settings.sstable_max_file_size
-        self._max_levels = self._settings.sstable_max_levels
 
         self._immutable_memtables = []
 
@@ -100,7 +93,6 @@ class LSMTree:
         self._compaction_interval_s = self._settings.compaction_interval_s
 
         self._mem_lock = threading.Lock()
-        self._sst_lock = threading.Lock()
 
         self.init()
 
@@ -127,7 +119,7 @@ class LSMTree:
         )
 
         self._file_picker = FilePicker(
-            self._max_levels,
+            self._settings.sstable_max_levels,
             sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
             sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
             sstable_level_multiplier=self._settings.sstable_level_multiplier,
@@ -135,7 +127,7 @@ class LSMTree:
 
         self._versions = VersionSet(
             self._path,
-            self._max_levels,
+            self._settings.sstable_max_levels,
         )
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
@@ -333,7 +325,7 @@ class LSMTree:
         Synchronous in-process compaction task of SSTables from L0 to Lmax.
 
         NOTE: This is for now a full compaction (not partial) because
-        it acts on the entire level, not specific files.
+        it acts on the entire source level, not specific files.
 
         Properties:
             - Key ordering guarantee inside the SSTable

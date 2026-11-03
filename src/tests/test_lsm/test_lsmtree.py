@@ -45,6 +45,7 @@ __all__ = [
     "test_lsmtree_sync_compact_replaces_levels_and_map",
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
+    "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
     "test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id",
 ]
 
@@ -463,10 +464,10 @@ def test_lsmtree_scan_level_gt_0_breaks_on_end_bound(tmp_path: Path):
         entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"v2")]
     )
 
-    lsmtree._versions.get_current_version().get_levels()[1] = [
+    lsmtree._versions._current_version._levels[1] = [  # type: ignore
         meta_break,
         meta_never_reached,
-    ]  # type: ignore
+    ]
     lsmtree._versions.get_sstable_map()[1] = sst_break  # type: ignore
     lsmtree._versions.get_sstable_map()[2] = sst_never_reached  # type: ignore
 
@@ -1014,3 +1015,46 @@ async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree.get(b"key3", 2) == b"val3"
     assert lsmtree.get(b"key3", 1) is None
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        memtable_max_bytes_size=10,  # force one-record flushes
+        sstable_max_file_size=10,
+        compaction_enabled=False,
+    )
+    lsmtree = LSMTree(settings, False, tmp_path)
+
+    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key3", 2, b"val3")
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
+
+    levels = lsmtree._versions.get_current_version().get_levels()
+    level0 = levels[0]
+    level0_file_ids = [meta["file_id"] for meta in level0]
+    map_file_ids = sorted(lsmtree._versions.get_sstable_map().keys())
+
+    # Coordinator invariant: metadata and table map must reference the same files.
+    assert len(level0) == 3
+    assert sorted(level0_file_ids) == map_file_ids
+
+    # Read path must stay coherent with persisted metadata state.
+    assert lsmtree.get(b"key1", 2) == b"val1"
+    assert lsmtree.get(b"key2", 2) == b"val2"
+    assert lsmtree.get(b"key3", 2) == b"val3"
+    assert lsmtree.get(b"unknown", 2) is None
+
+    assert list(lsmtree.scan(None, None, 2)) == [
+        (b"key1", b"val1"),
+        (b"key2", b"val2"),
+        (b"key3", b"val3"),
+    ]

@@ -106,7 +106,7 @@ def test_version_find_files_containing_handles_l0_overlap_in_reverse_order():
     new_meta = _meta(2, b"a", b"z")
     version = Version(levels=[[old_meta, new_meta], []])
 
-    found = list(version.find_files_containing(b"m", seq_num=0))
+    found = list(version.find_files_containing(b"m"))
 
     assert found == [new_meta, old_meta]
 
@@ -117,10 +117,10 @@ def test_version_find_files_containing_level_gt_zero_stops_early():
     version = Version(levels=[[], [meta1, meta2]])
 
     # key below first file smallest key should break early and return none
-    assert list(version.find_files_containing(b"a", seq_num=0)) == []
+    assert list(version.find_files_containing(b"a")) == []
 
     # key inside first range should return only first matching file
-    assert list(version.find_files_containing(b"d", seq_num=0)) == [meta1]
+    assert list(version.find_files_containing(b"d")) == [meta1]
 
 
 def test_versionset_init_creates_manifest_and_current_and_recovers_next_file_id(

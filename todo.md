@@ -3,6 +3,7 @@ We keep forgetting what we want to do and we too lazy to maintain a tool for it 
 - Implement durable restart by replaying wal into the store
 - Make SSTable recovered on DBReader instance
 - Make flush / compaction handle durable sstable lifecycle (deletion etc)
+- Rotate manifest on condition in the background
 - Use cheaper encoding for key / value length
 - Extend headers metadata (log number etc)
 - Introduce crash recovery
