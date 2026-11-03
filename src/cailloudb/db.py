@@ -21,18 +21,18 @@ class Db:
     def snapshot(self) -> DbSnapshot:
         return DbSnapshot(self.store)
 
-    async def get(self, key: bytes):
+    async def get(self, key: bytes) -> bytes | None:
         return await self.store.get(key)
 
-    async def put(self, key: bytes, val: bytes):
+    async def put(self, key: bytes, val: bytes) -> None:
         await self.store.put(key, val)
 
-    async def delete(self, key: bytes):
+    async def delete(self, key: bytes) -> None:
         await self.store.delete(key)
 
     async def shutdown(self): ...
 
-    async def write(self, batch: WriteBatch):
+    async def write(self, batch: WriteBatch) -> None:
         await self.store.write(batch)
 
     async def latest_sequence_number(self) -> int:

@@ -10,30 +10,21 @@ if TYPE_CHECKING:
     from write_batch import WriteBatch
 
 
-class BaseStore(ABC):
-    #: Sequence number for atomic write ops (put, del, merge)
-    _seq: SeqNum
-
-    #: Runtime settings
-    _settings: Settings
-
-    #: Path
-    _path: Path
+class _BaseStore(ABC):
+    @abstractmethod
+    async def get(self, key: bytes) -> bytes | None: ...
 
     @abstractmethod
-    async def get(self, key: bytes) -> bytes: ...
+    async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None: ...
 
     @abstractmethod
-    async def get_at(self, key: bytes, *, seq_num: int) -> bytes: ...
+    async def put(self, key: bytes, val: bytes) -> None: ...
 
     @abstractmethod
-    async def put(self, key: bytes, val: bytes): ...
+    async def delete(self, key: bytes) -> None: ...
 
     @abstractmethod
-    async def delete(self, key: bytes): ...
-
-    @abstractmethod
-    async def write(self, batch: WriteBatch): ...
+    async def write(self, batch: WriteBatch) -> None: ...
 
     @abstractmethod
     def scan(
@@ -49,20 +40,18 @@ class BaseStore(ABC):
     async def latest_sequence_number(self) -> int: ...
 
 
-class InMemoryStore(BaseStore):
+class BaseStore(_BaseStore):
+    #: Sequence number for atomic write ops (put, del, merge)
+    _seq: SeqNum
+
+    #: Runtime settings
+    _settings: Settings
+
+    #: Path
+    _path: Path
+
     #: LSMTree-based storage
     _tree: LSMTree
-
-    def __init__(self, path: Path | str):
-        self._settings = Settings()
-
-        self._seq = SeqNum()
-        self._path = Path(path)
-        self._tree = LSMTree(
-            settings=self._settings, durable_sstable=False, path=self._path
-        )
-
-        self.init()
 
     def init(self):
         self._path.mkdir(parents=True, exist_ok=True)
@@ -83,7 +72,7 @@ class InMemoryStore(BaseStore):
         """
         return self._tree.get(key, seq_num)
 
-    async def put(self, key: bytes, value: bytes):
+    async def put(self, key: bytes, value: bytes) -> None:
         """
         Put a key/value pair.
         """
@@ -95,7 +84,7 @@ class InMemoryStore(BaseStore):
         await self._tree.put(key, seq_num, value)
         self._seq.increment()
 
-    async def delete(self, key: bytes):
+    async def delete(self, key: bytes) -> None:
         """
         Delete a key.
 
@@ -105,7 +94,7 @@ class InMemoryStore(BaseStore):
         await self._tree.delete(key, seq_num)
         self._seq.increment()
 
-    async def write(self, batch: WriteBatch):
+    async def write(self, batch: WriteBatch) -> None:
         """
         Write a batch of operations in a single atomic operation.
         """
@@ -142,5 +131,27 @@ class InMemoryStore(BaseStore):
         return int(self._seq)
 
 
-class DurableStore:
-    NotImplementedError()
+class InMemoryStore(BaseStore):
+    def __init__(self, path: Path | str):
+        self._settings = Settings()
+
+        self._seq = SeqNum()
+        self._path = Path(path)
+        self._tree = LSMTree(
+            settings=self._settings, durable_sstable=False, path=self._path
+        )
+
+        self.init()
+
+
+class DurableStore(BaseStore):
+    def __init__(self, path: Path | str):
+        self._settings = Settings()
+
+        self._seq = SeqNum()
+        self._path = Path(path)
+        self._tree = LSMTree(
+            settings=self._settings, durable_sstable=True, path=self._path
+        )
+
+        self.init()

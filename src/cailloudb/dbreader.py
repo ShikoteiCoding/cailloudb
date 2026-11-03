@@ -11,7 +11,7 @@ class DbReader:
     def __init__(self, store: BaseStore):
         self._store = store
 
-    async def get(self, key: bytes) -> bytes:
+    async def get(self, key: bytes) -> bytes | None:
         return await self._store.get(key)
 
     def scan(

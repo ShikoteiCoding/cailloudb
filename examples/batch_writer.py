@@ -1,10 +1,10 @@
 import asyncio
 
-from cailloudb import DbBuilder, InMemoryStore, WriteBatch
+from cailloudb import DbBuilder, DurableStore, WriteBatch
 
 
 async def main():
-    store = InMemoryStore("data/batch_in_memory")
+    store = DurableStore("data/batch_writer")
     builder = DbBuilder(store)
     db = builder.build()
 
