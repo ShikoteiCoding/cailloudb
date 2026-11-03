@@ -2,7 +2,7 @@ import io
 from pathlib import Path
 from typing import Callable, Iterator
 
-from custom_types import FileMetaData
+from custom_types import FileMetadata
 from lsm.block import BlockBuilder
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
@@ -20,7 +20,7 @@ def write_iterator_to_sstables(
     target_block_size: int,
     durable_sstable: bool,
     sstable_dir: Path | None = None,
-) -> list[tuple[SSTable, FileMetaData]]:
+) -> list[tuple[SSTable, FileMetadata]]:
     """
     Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
     """
@@ -129,7 +129,7 @@ class TableBuilder:
         """
         return self.current_offset + self.block_builder.estimated_size()
 
-    def finish(self) -> tuple[SSTable, FileMetaData]:
+    def finish(self) -> tuple[SSTable, FileMetadata]:
         """
         Used by the caller to decide when to close the current file.
         """
@@ -155,7 +155,7 @@ class TableBuilder:
         raw = self.writer.detach()
         raw.seek(0)
 
-        meta = FileMetaData(
+        meta = FileMetadata(
             file_id=self.file_id,
             smallest_key=self.smallest_key,
             largest_key=self.largest_key,

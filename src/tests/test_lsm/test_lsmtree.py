@@ -96,7 +96,7 @@ def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Pa
 
     assert tmp_path.exists()
     assert tmp_path.is_dir()
-    assert lsmtree._next_file_id == 8
+    assert lsmtree._versions._next_file_id == 8
 
 
 @pytest.mark.asyncio
@@ -114,7 +114,7 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
         )
     )
     assert len(lsmtree._memtable) == 0
-    assert len(list(lsmtree._sstables_map.values())) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
 
     await lsmtree.put(b"key2", 1, b"val2")
     _wait_for_condition(
@@ -124,8 +124,8 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
         )
     )
     assert len(lsmtree._memtable) == 0
-    assert len(list(lsmtree._sstables_map.values())) == 2
-    assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 2
+    assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
     await lsmtree.put(b"key3", 2, b"val3")
     _wait_for_condition(
@@ -135,8 +135,8 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
         )
     )
     assert len(lsmtree._memtable) == 0
-    assert len(list(lsmtree._sstables_map.values())) == 3
-    assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 3
+    assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_lsmtree_internals_iteratively_1_records_memtables(tmp_path: Path)
 
     await lsmtree.put(b"key1", 0, b"val1")
     assert len(lsmtree._memtable) == 1
-    assert len(list(lsmtree._sstables_map.values())) == 0
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 0
 
     await lsmtree.put(b"key2", 1, b"val2")
     _wait_for_condition(
@@ -158,13 +158,13 @@ async def test_lsmtree_internals_iteratively_1_records_memtables(tmp_path: Path)
         )
     )
     assert len(lsmtree._memtable) == 0
-    assert len(list(lsmtree._sstables_map.values())) == 1
-    assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
     await lsmtree.put(b"key3", 2, b"val3")
     assert len(lsmtree._memtable) == 1
-    assert len(list(lsmtree._sstables_map.values())) == 1
-    assert len(list(lsmtree._sstables_map.values())[0].index_keys) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
 
 @pytest.mark.asyncio
@@ -230,8 +230,8 @@ def test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest(tmp_path: Path):
         "file_size": 100,
     }
 
-    lsmtree._levels[1] = [meta]  # type: ignore
-    lsmtree._sstables_map[1] = NeverCalledSSTable()  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[1] = [meta]  # type: ignore
+    lsmtree._versions.get_sstable_map()[1] = NeverCalledSSTable()  # type: ignore
 
     assert lsmtree.get(b"key1", 10) is None
 
@@ -256,22 +256,22 @@ async def test_lsmtree_get_from_sstable_because_of_spill(tmp_path: Path):
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree._memtable.get(b"key1", 2) is None
-    assert list(lsmtree._sstables_map.values())[0].get(b"key1", 2) == MemTableEntry(
-        key=b"key1", seq_num=0, value=b"val1"
-    )
+    assert list(lsmtree._versions.get_sstable_map().values())[0].get(
+        b"key1", 2
+    ) == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
 
     # Should get it from "middle" sstable
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree._memtable.get(b"key2", 2) is None
-    assert list(lsmtree._sstables_map.values())[1].get(b"key2", 2) == MemTableEntry(
-        key=b"key2", seq_num=1, value=b"val2"
-    )
+    assert list(lsmtree._versions.get_sstable_map().values())[1].get(
+        b"key2", 2
+    ) == MemTableEntry(key=b"key2", seq_num=1, value=b"val2")
 
     # Should get it from "recent" sstable
     assert lsmtree.get(b"key3", 2) == b"val3"
-    assert list(lsmtree._sstables_map.values())[2].get(b"key3", 2) == MemTableEntry(
-        key=b"key3", seq_num=2, value=b"val3"
-    )
+    assert list(lsmtree._versions.get_sstable_map().values())[2].get(
+        b"key3", 2
+    ) == MemTableEntry(key=b"key3", seq_num=2, value=b"val3")
 
 
 @pytest.mark.asyncio
@@ -295,21 +295,21 @@ async def test_lsmtree_get_from_sstable_or_skiplist(tmp_path: Path):
     # SSTable are then flushed
     # and a fresh memtable is created
     assert lsmtree._memtable.bytes_size > 0
-    assert len(list(lsmtree._sstables_map.values())) == 1
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
 
     # Should get it from "oldest" sstable
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree._memtable.get(b"key1", 2) is None
-    assert list(lsmtree._sstables_map.values())[0].get(b"key1", 2) == MemTableEntry(
-        key=b"key1", seq_num=0, value=b"val1"
-    )
+    assert list(lsmtree._versions.get_sstable_map().values())[0].get(
+        b"key1", 2
+    ) == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
 
     # Should get it from "recent" sstable
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree._memtable.get(b"key2", 2) is None
-    assert list(lsmtree._sstables_map.values())[0].get(b"key2", 2) == MemTableEntry(
-        key=b"key2", seq_num=1, value=b"val2"
-    )
+    assert list(lsmtree._versions.get_sstable_map().values())[0].get(
+        b"key2", 2
+    ) == MemTableEntry(key=b"key2", seq_num=1, value=b"val2")
 
     # Should get it from skiplist
     assert lsmtree.get(b"key3", 2) == b"val3"
@@ -376,9 +376,9 @@ def test_lsmtree_scan_skips_file_when_before_start_key(tmp_path: Path):
     sst1 = CountingSSTable(entries=[MemTableEntry(key=b"key1", seq_num=0, value=b"v1")])
     sst2 = CountingSSTable(entries=[MemTableEntry(key=b"key6", seq_num=1, value=b"v6")])
 
-    lsmtree._levels[1] = [meta1, meta2]  # type: ignore
-    lsmtree._sstables_map[1] = sst1  # type: ignore
-    lsmtree._sstables_map[2] = sst2  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[1] = [meta1, meta2]  # type: ignore
+    lsmtree._versions.get_sstable_map()[1] = sst1  # type: ignore
+    lsmtree._versions.get_sstable_map()[2] = sst2  # type: ignore
 
     result = list(lsmtree.scan(start_key=b"key5", end_key=None, seq_num=10))
 
@@ -420,9 +420,9 @@ def test_lsmtree_scan_level0_continues_on_end_bound(tmp_path: Path):
         entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"v2")]
     )
 
-    lsmtree._levels[0] = [meta_skip, meta_in_range]  # type: ignore
-    lsmtree._sstables_map[1] = sst_skip  # type: ignore
-    lsmtree._sstables_map[2] = sst_in_range  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[0] = [meta_skip, meta_in_range]  # type: ignore
+    lsmtree._versions.get_sstable_map()[1] = sst_skip  # type: ignore
+    lsmtree._versions.get_sstable_map()[2] = sst_in_range  # type: ignore
 
     result = list(lsmtree.scan(start_key=None, end_key=b"key5", seq_num=10))
 
@@ -463,9 +463,12 @@ def test_lsmtree_scan_level_gt_0_breaks_on_end_bound(tmp_path: Path):
         entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"v2")]
     )
 
-    lsmtree._levels[1] = [meta_break, meta_never_reached]  # type: ignore
-    lsmtree._sstables_map[1] = sst_break  # type: ignore
-    lsmtree._sstables_map[2] = sst_never_reached  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[1] = [
+        meta_break,
+        meta_never_reached,
+    ]  # type: ignore
+    lsmtree._versions.get_sstable_map()[1] = sst_break  # type: ignore
+    lsmtree._versions.get_sstable_map()[2] = sst_never_reached  # type: ignore
 
     result = list(lsmtree.scan(start_key=None, end_key=b"key5", seq_num=10))
 
@@ -603,7 +606,7 @@ def test_lsmtree_scan_iterator_agg_break(
         "scan",
         lambda _start_key, _end_key, _seq_num: mock_iterator,
     )
-    assert len(list(lsmtree._sstables_map.values())) == 0
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 0
 
     # end_key=b"key2" means b"key3" will trigger the break condition
     result = list(lsmtree.scan(start_key=b"key0", end_key=b"key2", seq_num=5))
@@ -633,7 +636,7 @@ def test_lsmtree_scan_future_seq_continue(
         "scan",
         lambda _start_key, _end_key, _seq_num: mock_iterator,
     )
-    lsmtree._sstables_map = {}
+    lsmtree._versions._sstables_map = {}
 
     # seq_num=7 means seq_num=10 is from the future and should be skipped
     result = list(lsmtree.scan(start_key=None, end_key=None, seq_num=7))
@@ -667,7 +670,7 @@ async def test_rotate_deletes_sealed_wal_after_flush(tmp_path: Path):
     assert lsmtree._wal is not None
     assert lsmtree._wal._path.name == "wal_000002.log"
     assert lsmtree._wal._path.stat().st_size == 0
-    assert len(lsmtree._sstables_map) == 1
+    assert len(lsmtree._versions.get_sstable_map()) == 1
 
 
 def test_lsmtree_flush_empty_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -680,7 +683,7 @@ def test_lsmtree_flush_empty_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         )
     )
 
-    assert len(list(lsmtree._sstables_map.values())) == 0
+    assert len(list(lsmtree._versions.get_sstable_map().values())) == 0
 
 
 def test_lsmtree_flush_worker_returns_when_queue_is_none(tmp_path: Path):
@@ -689,7 +692,7 @@ def test_lsmtree_flush_worker_returns_when_queue_is_none(tmp_path: Path):
 
     lsmtree._flush_worker()
 
-    assert lsmtree._sstables_map == {}
+    assert lsmtree._versions.get_sstable_map() == {}
 
 
 def test_lsmtree_flush_worker_exception_path(tmp_path: Path):
@@ -754,11 +757,11 @@ async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime
     )
 
     _wait_for_condition(
-        lambda: len(lsmtree._levels[1]) == 4,
+        lambda: len(lsmtree._versions.get_current_version().get_levels()[1]) == 4,
         timeout_s=2.0,
     )
 
-    assert len(lsmtree._levels[1]) == 4
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 4
 
 
 @pytest.mark.asyncio
@@ -780,16 +783,22 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
         )
     )
 
-    assert len(lsmtree._levels[0]) == 3
-    old_level0_file_ids = [meta["file_id"] for meta in lsmtree._levels[0]]
-    old_map_file_ids = sorted(lsmtree._sstables_map.keys())
-    old_next_file_id = lsmtree._next_file_id
+    assert len(lsmtree._versions.get_current_version().get_levels()[0]) == 3
+    old_level0_file_ids = [
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[0]
+    ]
+    old_map_file_ids = sorted(lsmtree._versions.get_sstable_map().keys())
+    old_next_file_id = lsmtree._versions._next_file_id
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
-    assert [meta["file_id"] for meta in lsmtree._levels[0]] == old_level0_file_ids
-    assert sorted(lsmtree._sstables_map.keys()) == old_map_file_ids
-    assert lsmtree._next_file_id == old_next_file_id
+    assert [
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[0]
+    ] == old_level0_file_ids
+    assert sorted(lsmtree._versions.get_sstable_map().keys()) == old_map_file_ids
+    assert lsmtree._versions._next_file_id == old_next_file_id
 
 
 def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
@@ -799,11 +808,13 @@ def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
     lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
 
     # Ensure we pass the `source_level == -1` guard and hit `if not input_metas: return`.
-    monkeypatch.setattr(lsmtree._file_picker, "pick_compaction_level", lambda: 0)
+    monkeypatch.setattr(
+        lsmtree._file_picker, "pick_compaction_level", lambda _version: 0
+    )
     monkeypatch.setattr(
         lsmtree._file_picker,
         "pick_compaction_files",
-        lambda _source_level, _target_level: ([], []),
+        lambda _source_level, _target_level, _version: ([], []),
     )
 
     def _should_not_compact(*_args, **_kwargs):
@@ -813,15 +824,17 @@ def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
 
     monkeypatch.setattr(lsmtree._compactor, "compact", _should_not_compact)
 
-    old_levels = [list(level) for level in lsmtree._levels]
-    old_map = dict(lsmtree._sstables_map)
-    old_next_file_id = lsmtree._next_file_id
+    old_levels = [
+        list(level) for level in lsmtree._versions.get_current_version().get_levels()
+    ]
+    old_map = dict(lsmtree._versions.get_sstable_map())
+    old_next_file_id = lsmtree._versions._next_file_id
 
     lsmtree._pick_and_compact()
 
-    assert lsmtree._levels == old_levels
-    assert lsmtree._sstables_map == old_map
-    assert lsmtree._next_file_id == old_next_file_id
+    assert lsmtree._versions.get_current_version().get_levels() == old_levels
+    assert lsmtree._versions.get_sstable_map() == old_map
+    assert lsmtree._versions._next_file_id == old_next_file_id
 
 
 @pytest.mark.asyncio
@@ -843,15 +856,21 @@ async def test_lsmtree_sync_compact_uses_picker_selected_files(tmp_path: Path):
             and not lsmtree._immutable_memtables
         )
     )
-    old_level0_file_ids = {meta["file_id"] for meta in lsmtree._levels[0]}
+    old_level0_file_ids = {
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[0]
+    }
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
-    assert lsmtree._levels[0] == []
-    assert len(lsmtree._levels[1]) == 4
-    new_level1_file_ids = {meta["file_id"] for meta in lsmtree._levels[1]}
+    assert lsmtree._versions.get_current_version().get_levels()[0] == []
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 4
+    new_level1_file_ids = {
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[1]
+    }
     assert old_level0_file_ids.isdisjoint(new_level1_file_ids)
-    assert new_level1_file_ids.issubset(set(lsmtree._sstables_map.keys()))
+    assert new_level1_file_ids.issubset(set(lsmtree._versions.get_sstable_map().keys()))
 
 
 def test_lsmtree_sync_compact_replaces_levels_and_map(
@@ -872,16 +891,16 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         "largest_key": b"k4",
         "file_size": 100,
     }
-    lsmtree._levels[0] = [source_meta]  # type: ignore
-    lsmtree._levels[1] = [target_meta]  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[0] = [source_meta]  # type: ignore
+    lsmtree._versions.get_current_version().get_levels()[1] = [target_meta]  # type: ignore
 
     source_sstable = object()
     target_sstable = object()
-    lsmtree._sstables_map = {  # type: ignore
+    lsmtree._versions._sstables_map = {  # type: ignore
         1: source_sstable,
         2: target_sstable,
     }
-    lsmtree._next_file_id = 10
+    lsmtree._versions._next_file_id = 10
 
     generated_meta = {
         "file_id": 10,
@@ -902,17 +921,19 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         assert level_sstable_size == lsmtree._sstable_size
         return [(generated_sstable, generated_meta)]
 
-    monkeypatch.setattr(lsmtree._file_picker, "pick_compaction_level", lambda: 0)
+    monkeypatch.setattr(
+        lsmtree._file_picker, "pick_compaction_level", lambda _version: 0
+    )
     monkeypatch.setattr(lsmtree._compactor, "compact", mock_compact)
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
-    assert lsmtree._levels[0] == []
-    assert lsmtree._levels[1] == [generated_meta]
-    assert lsmtree._sstables_map[10] == generated_sstable
-    assert lsmtree._sstables_map[1] == source_sstable
-    assert lsmtree._sstables_map[2] == target_sstable
-    assert lsmtree._next_file_id == 11
+    assert lsmtree._versions.get_current_version().get_levels()[0] == []
+    assert lsmtree._versions.get_current_version().get_levels()[1] == [generated_meta]
+    assert lsmtree._versions.get_sstable_map()[10] == generated_sstable
+    assert 1 not in lsmtree._versions.get_sstable_map()
+    assert 2 not in lsmtree._versions.get_sstable_map()
+    assert lsmtree._versions._next_file_id == 11
 
 
 @pytest.mark.asyncio
@@ -934,20 +955,26 @@ async def test_lsmtree_sync_compact_then_scan(tmp_path: Path):
         )
     )
 
-    assert len(lsmtree._levels[0]) == 4
-    assert len(lsmtree._levels[1]) == 0
+    assert len(lsmtree._versions.get_current_version().get_levels()[0]) == 4
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 0
 
-    old_level0_file_ids = {meta["file_id"] for meta in lsmtree._levels[0]}
+    old_level0_file_ids = {
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[0]
+    }
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
-    assert lsmtree._levels[0] == []
-    assert len(lsmtree._levels[1]) == 4
+    assert lsmtree._versions.get_current_version().get_levels()[0] == []
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 4
 
-    new_level1_file_ids = {meta["file_id"] for meta in lsmtree._levels[1]}
+    new_level1_file_ids = {
+        meta["file_id"]
+        for meta in lsmtree._versions.get_current_version().get_levels()[1]
+    }
     assert old_level0_file_ids.isdisjoint(new_level1_file_ids)
 
-    assert new_level1_file_ids.issubset(set(lsmtree._sstables_map.keys()))
+    assert new_level1_file_ids.issubset(set(lsmtree._versions.get_sstable_map().keys()))
 
     assert list(lsmtree.scan(None, None, 2)) == [
         (b"key1", b"val1"),
@@ -975,13 +1002,13 @@ async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
         )
     )
 
-    assert len(lsmtree._levels[0]) == 4
-    assert len(lsmtree._levels[1]) == 0
+    assert len(lsmtree._versions.get_current_version().get_levels()[0]) == 4
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 0
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
-    assert lsmtree._levels[0] == []
-    assert len(lsmtree._levels[1]) == 4
+    assert lsmtree._versions.get_current_version().get_levels()[0] == []
+    assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 4
 
     assert lsmtree.get(b"key1", 2) == b"val1"
     assert lsmtree.get(b"key2", 2) == b"val2"

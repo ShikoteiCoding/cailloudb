@@ -29,7 +29,7 @@ class SeqNum:
         return self._value
 
 
-class FileMetaData(TypedDict):
+class FileMetadata(TypedDict):
     """
     Represents an SSTable file on disk.
     """
