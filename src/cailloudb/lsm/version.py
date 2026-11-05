@@ -1,3 +1,4 @@
+import ast
 import io
 import json
 import os
@@ -62,11 +63,25 @@ class VersionEdit:
     @classmethod
     def decode(cls, line: bytes) -> VersionEdit:
         data = json.loads(line.decode("utf-8"))
+
+        def _normalize(value):
+            if isinstance(value, str):
+                try:
+                    return ast.literal_eval(value)
+                except ValueError, SyntaxError:
+                    return value
+            return value
+
+        deleted_files = _normalize(data.get("deleted_files", []))
+        added_files = _normalize(data.get("added_files", []))
+        next_file_id = _normalize(data.get("next_file_id", -1))
+        log_number = _normalize(data.get("log_number", -1))
+
         return cls(
-            deleted_files=[(lvl, fid) for lvl, fid in data.get("deleted_files", [])],
-            added_files=[(lvl, meta) for lvl, meta in data.get("added_files", [])],
-            next_file_id=data.get("next_file_id"),
-            log_number=data.get("log_number"),
+            deleted_files=[(lvl, fid) for lvl, fid in deleted_files],  # type: ignore
+            added_files=[(lvl, meta) for lvl, meta in added_files],  # type: ignore
+            next_file_id=int(next_file_id),
+            log_number=int(log_number),
         )
 
 
@@ -168,12 +183,15 @@ class VersionSet:
 
         if current_path.exists():
             levels, manifest_path, log_number = self._recover_from_manifest(max_levels)
-            print(log_number)
+
+            # If no sstable, need to discover log files instead of manifest
             if log_number == -1:
                 self.recovery_log_number = self._recover_log_number(self._path)
+            else:
+                self.recovery_log_number = log_number
         else:
             manifest_path = self._create_initial_manifest(1)
-            self.recovery_log_number = 1
+            self.recovery_log_number = -1
 
         self._manifest_file = open(manifest_path, "ab")
         self._current_version = Version(levels)
@@ -195,14 +213,15 @@ class VersionSet:
     @staticmethod
     def _recover_log_number(dir: Path) -> int:
         """
-        Return the latest log number stored or default to 1.
+        Return the latest log number stored or default to -1 (no log found).
         """
-        log_number = 1
+        log_number = -1
 
         for path in dir.glob("wal_*.log"):
             digits = path.stem.removeprefix("wal_")
             if len(digits) == 6 and digits.isdigit():
                 log_number = max(log_number, int(digits))
+
         return log_number
 
     def file_id_generator(self) -> int:

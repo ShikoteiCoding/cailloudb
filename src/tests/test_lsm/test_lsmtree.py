@@ -15,6 +15,10 @@ from cailloudb.lsm.utils import build_internal_key
 from cailloudb.settings import TOMBSTONE, Settings
 
 __all__ = [
+    "test_lsmtree_fresh_boot_creates_initial_layout_and_empty_runtime_state",
+    "test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_duplicates",
+    "test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state",
+    "test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_data",
     "test_lsmtree_internals_iteratively_0_record_memtable",
     "test_lsmtree_internals_iteratively_1_records_memtables",
     "test_lsmtree_functional_put_get_with_wal_enabled_or_disabled",
@@ -46,7 +50,6 @@ __all__ = [
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
     "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
-    "test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_positive",
     "test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id",
 ]
 
@@ -84,6 +87,28 @@ def _isolated_settings(**overrides) -> Settings:
     )
 
 
+def test_lsmtree_fresh_boot_creates_initial_layout_and_empty_runtime_state(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "fresh-db"
+    db_path.mkdir(exist_ok=True)
+
+    settings = _isolated_settings(compaction_enabled=False)
+    lsmtree = LSMTree(settings, False, db_path)
+
+    assert db_path.exists()
+    assert db_path.is_dir()
+    assert (db_path / "CURRENT").exists()
+    assert (db_path / "MANIFEST-000001").exists()
+    assert (db_path / "wal_000001.log").exists()
+    assert len(lsmtree._memtable) == 0
+    assert all(
+        len(level) == 0
+        for level in lsmtree._versions.get_current_version().get_levels()
+    )
+    assert lsmtree._versions._next_file_id == 1
+
+
 def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Path):
     sstable_dir = tmp_path
     sstable_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +127,7 @@ def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_positive(
+async def test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_duplicates(
     tmp_path: Path,
 ):
     settings = _isolated_settings(
@@ -112,9 +137,12 @@ async def test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_p
         memtable_max_bytes_size=1024 * 1024,
     )
 
-    # Write into the log first
     first = LSMTree(settings, False, tmp_path)
-    await first.put(b"recovered-key", 0, b"recovered-val")
+    await first.put(b"k1", 10, b"v1")
+    await first.put(b"k2", 11, b"v2")
+
+    if first._wal is not None:
+        first._wal.close()
 
     second = LSMTree(settings, False, tmp_path)
 
@@ -122,7 +150,104 @@ async def test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_p
     assert second._wal is not None
     assert second._wal.log_number == 1
     assert second._memtable.log_number == 1
-    assert second.get(b"recovered-key", 0) == b"recovered-val"
+    assert len(second._memtable) == 2
+    assert second.get(b"k1", 10) == b"v1"
+    assert second.get(b"k2", 11) == b"v2"
+    assert second._memtable.get(b"k1", 10) == MemTableEntry(
+        key=b"k1", seq_num=10, value=b"v1"
+    )
+    assert second._memtable.get(b"k2", 11) == MemTableEntry(
+        key=b"k2", seq_num=11, value=b"v2"
+    )
+    assert list(second.scan(None, None, 11)) == [(b"k1", b"v1"), (b"k2", b"v2")]
+    assert second._versions.get_current_version().get_levels()[0] == []
+    assert (tmp_path / "wal_000001.log").exists()
+    assert not (tmp_path / "wal_000002.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        compaction_enabled=False,
+        memtable_max_bytes_size=96,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    seq_num = 0
+    while len(first._versions.get_current_version().get_levels()[0]) == 0:
+        key = f"old-{seq_num}".encode("utf-8")
+        val = f"old-val-{seq_num}".encode("utf-8")
+        await first.put(key, seq_num, val)
+        seq_num += 1
+        assert seq_num < 50
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0
+            and not first._immutable_memtables
+            and len(first._versions.get_current_version().get_levels()[0]) >= 1
+        )
+    )
+
+    assert not (tmp_path / "wal_000001.log").exists()
+    assert first._wal is not None
+    assert first._wal.log_number >= 2
+    assert first._wal._path.exists()
+
+    await first.put(b"new-key", 1000, b"new-value")
+
+    second = LSMTree(settings, True, tmp_path)
+    level0_metas = second._versions.get_current_version().get_levels()[0]
+
+    assert len(level0_metas) >= 1
+    assert any(meta["file_id"] == 1 for meta in level0_metas)
+    assert second._memtable.get(b"new-key", 1000) == MemTableEntry(
+        key=b"new-key", seq_num=1000, value=b"new-value"
+    )
+    assert second.get(b"old-0", 1000) == b"old-val-0"
+    assert second.get(b"new-key", 1000) == b"new-value"
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_data(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        compaction_enabled=False,
+        memtable_max_bytes_size=96,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    seq_num = 0
+    while len(first._versions.get_current_version().get_levels()[0]) == 0:
+        key = f"stable-{seq_num}".encode("utf-8")
+        val = f"stable-val-{seq_num}".encode("utf-8")
+        await first.put(key, seq_num, val)
+        seq_num += 1
+        assert seq_num < 50
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0
+            and not first._immutable_memtables
+            and len(first._versions.get_current_version().get_levels()[0]) >= 1
+        )
+    )
+
+    assert first._wal is not None
+    active_wal_path = first._wal._path
+    if active_wal_path.exists():
+        active_wal_path.unlink()
+
+    second = LSMTree(settings, True, tmp_path)
+
+    assert len(second._memtable) == 0
+    assert second.get(b"stable-0", 1000) == b"stable-val-0"
+    assert len(second._versions.get_current_version().get_levels()[0]) >= 1
 
 
 @pytest.mark.asyncio

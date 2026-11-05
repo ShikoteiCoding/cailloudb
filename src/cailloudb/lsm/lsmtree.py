@@ -112,7 +112,7 @@ class LSMTree:
             print(recovery_log_number)
 
             # NOTE: Convention is 0 means no existing log as it starts at 1.
-            if recovery_log_number == 0:
+            if recovery_log_number == -1:
                 self._wal = Wal(self._path, 1)
                 self._memtable = MemTable(
                     max_bytes_size=self._memtable_size, log_number=1
