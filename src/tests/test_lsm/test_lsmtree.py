@@ -46,6 +46,7 @@ __all__ = [
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
     "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
+    "test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_positive",
     "test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id",
 ]
 
@@ -98,6 +99,30 @@ def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Pa
     assert tmp_path.exists()
     assert tmp_path.is_dir()
     assert lsmtree._versions._next_file_id == 8
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_init_replays_wal_when_versionset_recovery_log_number_is_positive(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        # Keep records in WAL and avoid background side effects for this scenario.
+        compaction_enabled=False,
+        memtable_max_bytes_size=1024 * 1024,
+    )
+
+    # Write into the log first
+    first = LSMTree(settings, False, tmp_path)
+    await first.put(b"recovered-key", 0, b"recovered-val")
+
+    second = LSMTree(settings, False, tmp_path)
+
+    assert second._versions.recovery_log_number == 1
+    assert second._wal is not None
+    assert second._wal.log_number == 1
+    assert second._memtable.log_number == 1
+    assert second.get(b"recovered-key", 0) == b"recovered-val"
 
 
 @pytest.mark.asyncio

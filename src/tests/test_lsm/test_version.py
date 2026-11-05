@@ -192,7 +192,7 @@ def test_versionset_recover_from_manifest_applies_deletes_and_next_file_id(
         b"".join(json.dumps(line).encode("utf-8") + b"\n" for line in manifest_lines)
     )
 
-    levels = versions._recover_from_manifest(max_levels=2)
+    levels, _, _ = versions._recover_from_manifest(max_levels=2)
 
     assert levels == [[], []]
     assert 3 not in versions.get_sstable_map()

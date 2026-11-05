@@ -1,6 +1,6 @@
 import os
 import zlib
-from io import BufferedWriter
+from io import BufferedReader, BufferedWriter
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
@@ -54,29 +54,18 @@ class Wal:
     _path: Path
 
     #: Active log file buffered writter
-    _file: BufferedWriter
+    _file: BufferedReader | BufferedWriter
 
-    def __init__(
-        self,
-        path: Path,
-    ):
-        self._wal_block_size = WAL_BLOCK_SIZE
-
-        # create folder on disk
-        path.mkdir(parents=True, exist_ok=True)
-        self.log_number = self._existing_number(path) + 1
+    def __init__(self, path: Path, log_number: int, mode: str = "ab"):
+        self.log_number = log_number
         self._path = path / f"wal_{self.log_number:06d}.log"
+        self._path.touch(exist_ok=True)
+        self._wal_block_size = WAL_BLOCK_SIZE
+        self._file = self._path.open(mode)  # type: ignore
 
-        # init or crash, a new WAL file is always created
-        self._file = self._path.open("ab")
-
-    def _existing_number(self, path: Path) -> int:
-        highest = 0
-        for entry in path.glob("wal_*.log"):
-            digits = entry.stem.removeprefix("wal_")
-            if len(digits) == 6 and digits.isdigit():
-                highest = max(highest, int(digits))
-        return highest
+    @classmethod
+    def open_for_recovery(cls, path: Path, log_number: int) -> Wal:
+        return cls(path=path, log_number=log_number, mode="rb")
 
     def _build_physical_record(self, kind: int, payload: bytes) -> bytes:
         checksum = zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF
@@ -153,7 +142,7 @@ class Wal:
             is_batch = False
 
         if is_batch:
-            self._append_batch(self._file, body)
+            self._append_batch(self._file, body)  # type: ignore
         else:
             self._append_single(self._file, body)
 

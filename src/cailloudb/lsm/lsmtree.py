@@ -11,13 +11,12 @@ from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
 from lsm.table_builder import FileMetadata, write_iterator_to_sstables
-from lsm.utils import extract_from_internal_key
 from lsm.version import VersionEdit, VersionSet
+from lsm.wal import Wal
 from settings import (
     TOMBSTONE,
     Settings,
 )
-from wal import Wal
 from write_batch import WriteBatch
 
 
@@ -103,11 +102,27 @@ class LSMTree:
         self._start_compaction_worker()
 
     def init(self):
+        self._versions = VersionSet(
+            self._path,
+            self._settings.sstable_max_levels,
+        )
+
         if self._wal_enabled:
-            self._wal = Wal(self._path)
-            self._memtable = MemTable(
-                max_bytes_size=self._memtable_size, log_number=self._wal.log_number
-            )
+            recovery_log_number = self._versions.recovery_log_number
+            print(recovery_log_number)
+
+            # NOTE: Convention is 0 means no existing log as it starts at 1.
+            if recovery_log_number == 0:
+                self._wal = Wal(self._path, 1)
+                self._memtable = MemTable(
+                    max_bytes_size=self._memtable_size, log_number=1
+                )
+            else:
+                self._memtable = MemTable(
+                    max_bytes_size=self._memtable_size, log_number=recovery_log_number
+                )
+                self._replay_logs_to_memtable(recovery_log_number)
+                self._wal = Wal(self._path, recovery_log_number)
         else:
             self._wal = None
             self._memtable = MemTable(max_bytes_size=self._memtable_size)
@@ -125,10 +140,10 @@ class LSMTree:
             sstable_level_multiplier=self._settings.sstable_level_multiplier,
         )
 
-        self._versions = VersionSet(
-            self._path,
-            self._settings.sstable_max_levels,
-        )
+    def _replay_logs_to_memtable(self, recovery_log_number: int):
+        wal_reader = Wal.open_for_recovery(self._path, recovery_log_number)
+        for key, seq_num, value in wal_reader.records():
+            self._insert(key, seq_num, value)
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """

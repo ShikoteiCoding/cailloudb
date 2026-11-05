@@ -120,6 +120,8 @@ class Version:
 class VersionSet:
     """
     Manifest-backed state structure for LSMTree.
+
+    Handles all metadata related to durability and act as the entrypoint.
     """
 
     #: Path to metadata
@@ -141,6 +143,10 @@ class VersionSet:
     #: Next file id for newly created SSTables
     _next_file_id: int
 
+    #: Start log number for recovery. -1 is a convention
+    # to inform that there is no log currently
+    recovery_log_number: int
+
     #: File ID Lock
     _file_id_lock: threading.Lock
 
@@ -150,6 +156,7 @@ class VersionSet:
         self._manifest_file_id = 1
         self._sstables_map = {}
         self._next_file_id = 1
+        self.recovery_log_number = -1
         self._file_id_lock = threading.Lock()
 
         self.init(max_levels)
@@ -160,13 +167,15 @@ class VersionSet:
         levels = [[] for _ in range(max_levels)]
 
         if current_path.exists():
-            levels = self._recover_from_manifest(max_levels)
-            self._manifest_file_id = self._read_current_manifest_id()
-            manifest_path = self._manifest_path_from_id(self._manifest_file_id)
-            self._manifest_file = open(manifest_path, "ab")
+            levels, manifest_path, log_number = self._recover_from_manifest(max_levels)
+            print(log_number)
+            if log_number == -1:
+                self.recovery_log_number = self._recover_log_number(self._path)
         else:
-            self._create_initial_manifest(1)
+            manifest_path = self._create_initial_manifest(1)
+            self.recovery_log_number = 1
 
+        self._manifest_file = open(manifest_path, "ab")
         self._current_version = Version(levels)
 
     @staticmethod
@@ -183,6 +192,19 @@ class VersionSet:
 
         return max_file_id + 1
 
+    @staticmethod
+    def _recover_log_number(dir: Path) -> int:
+        """
+        Return the latest log number stored or default to 1.
+        """
+        log_number = 1
+
+        for path in dir.glob("wal_*.log"):
+            digits = path.stem.removeprefix("wal_")
+            if len(digits) == 6 and digits.isdigit():
+                log_number = max(log_number, int(digits))
+        return log_number
+
     def file_id_generator(self) -> int:
         """
         Thread-safe file ID Generator.
@@ -194,7 +216,38 @@ class VersionSet:
             self._next_file_id += 1
             return file_id
 
-    def _create_initial_manifest(self, starting_manifest_file_id: int) -> None:
+    def _recover_from_manifest(
+        self, max_levels: int
+    ) -> tuple[list[list[FileMetadata]], Path, int]:
+        levels = [[] for _ in range(max_levels)]
+
+        self._manifest_file_id = self._read_current_manifest_id()
+        manifest_path = self._manifest_path_from_id()
+        recovery_log_number = -1
+
+        with manifest_path.open("rb") as f:
+            for line in f:
+                edit = VersionEdit.decode(line)
+
+                for level, file_id in edit.deleted_files:
+                    levels[level] = [
+                        fm for fm in levels[level] if fm["file_id"] != file_id
+                    ]
+                    self._sstables_map.pop(file_id, None)
+
+                for level, file_meta in edit.added_files:
+                    levels[level].append(file_meta)
+                    file_id = file_meta["file_id"]
+                    self._sstables_map[file_id] = DurableSSTable(
+                        file_id, self._path, f"{file_id:06d}.sst"
+                    )
+
+                recovery_log_number = max(recovery_log_number, edit.log_number)
+                self._next_file_id = max(self._next_file_id, edit.next_file_id)
+
+        return levels, manifest_path, recovery_log_number
+
+    def _create_initial_manifest(self, starting_manifest_file_id: int) -> Path:
         """
         Writes the first MANIFEST-000001 and points CURRENT to it.
         """
@@ -209,15 +262,15 @@ class VersionSet:
             current_f.flush()
             os.fsync(current_f.fileno())
 
-        self._manifest_file = open(manifest_path, "ab")
+        return manifest_path
 
     def _read_current_manifest_id(self) -> int:
         current_path = self._path / "CURRENT"
         current_data = current_path.read_text(encoding="utf-8").strip()
         return int(current_data) if current_data else 1
 
-    def _manifest_path_from_id(self, manifest_id: int) -> Path:
-        return self._path / f"MANIFEST-{manifest_id:06d}"
+    def _manifest_path_from_id(self) -> Path:
+        return self._path / f"MANIFEST-{self._manifest_file_id:06d}"
 
     def log_and_apply(self, edit: VersionEdit, sstables: list[SSTable]) -> None:
         with self._version_lock:
@@ -264,33 +317,6 @@ class VersionSet:
 
         self._next_file_id = max(self._next_file_id, edit.next_file_id)
         return updated_levels
-
-    def _recover_from_manifest(self, max_levels: int) -> list[list[FileMetadata]]:
-        levels = [[] for _ in range(max_levels)]
-
-        manifest_id = self._read_current_manifest_id()
-        manifest_path = self._manifest_path_from_id(manifest_id)
-
-        with manifest_path.open("rb") as f:
-            for line in f:
-                edit = VersionEdit.decode(line)
-
-                for level, file_id in edit.deleted_files:
-                    levels[level] = [
-                        fm for fm in levels[level] if fm["file_id"] != file_id
-                    ]
-                    self._sstables_map.pop(file_id, None)
-
-                for level, file_meta in edit.added_files:
-                    levels[level].append(file_meta)
-                    file_id = file_meta["file_id"]
-                    self._sstables_map[file_id] = DurableSSTable(
-                        file_id, self._path, f"{file_id:06d}.sst"
-                    )
-
-                self._next_file_id = max(self._next_file_id, edit.next_file_id)
-
-        return levels
 
     def get(self, key: bytes, seq_num: int) -> bytes | None:
         version = self._current_version
