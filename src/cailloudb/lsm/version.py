@@ -1,4 +1,3 @@
-import ast
 import io
 import json
 import os
@@ -7,9 +6,15 @@ from pathlib import Path
 from typing import Iterator
 
 from custom_types import SSTableEntry
+from lsm.custom_types import (
+    FileMetadata,
+)
 from lsm.sstable import DurableSSTable, SSTable
-from lsm.table_builder import FileMetadata
-from lsm.utils import extract_from_internal_key
+from lsm.utils import (
+    decode_file_metadata,
+    encode_file_metadata,
+    extract_from_internal_key,
+)
 from settings import TOMBSTONE
 
 
@@ -53,10 +58,18 @@ class VersionEdit:
         Serializes the version edit into a single line of JSON bytes.
         """
         data = {
-            "deleted_files": str(self.deleted_files),
-            "added_files": str(self.added_files),
-            "next_file_id": str(self.next_file_id),
-            "log_number": str(self.log_number),
+            "deleted_files": [
+                [level, file_id] for level, file_id in self.deleted_files
+            ],
+            "added_files": [
+                [
+                    level,
+                    encode_file_metadata(file_meta),
+                ]
+                for level, file_meta in self.added_files
+            ],
+            "next_file_id": self.next_file_id,
+            "log_number": self.log_number,
         }
         return json.dumps(data).encode("utf-8") + b"\n"
 
@@ -64,24 +77,16 @@ class VersionEdit:
     def decode(cls, line: bytes) -> VersionEdit:
         data = json.loads(line.decode("utf-8"))
 
-        def _normalize(value):
-            if isinstance(value, str):
-                try:
-                    return ast.literal_eval(value)
-                except ValueError, SyntaxError:
-                    return value
-            return value
-
-        deleted_files = _normalize(data.get("deleted_files", []))
-        added_files = _normalize(data.get("added_files", []))
-        next_file_id = _normalize(data.get("next_file_id", -1))
-        log_number = _normalize(data.get("log_number", -1))
-
         return cls(
-            deleted_files=[(lvl, fid) for lvl, fid in deleted_files],  # type: ignore
-            added_files=[(lvl, meta) for lvl, meta in added_files],  # type: ignore
-            next_file_id=int(next_file_id),
-            log_number=int(log_number),
+            deleted_files=[
+                (int(level), int(file_id)) for level, file_id in data["deleted_files"]
+            ],
+            added_files=[
+                (int(level), decode_file_metadata(meta))
+                for level, meta in data["added_files"]
+            ],
+            next_file_id=int(data["next_file_id"]),
+            log_number=int(data["log_number"]),
         )
 
 

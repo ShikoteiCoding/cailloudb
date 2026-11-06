@@ -7,10 +7,11 @@ from typing import Callable, Iterator
 
 from custom_types import MemTableEntry, SSTableEntry
 from lsm.compactor import Compactor
+from lsm.custom_types import FileMetadata
 from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
-from lsm.table_builder import FileMetadata, write_iterator_to_sstables
+from lsm.table_builder import write_iterator_to_sstables
 from lsm.version import VersionEdit, VersionSet
 from lsm.wal import Wal
 from settings import (

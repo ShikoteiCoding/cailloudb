@@ -2,8 +2,8 @@ import io
 from pathlib import Path
 from typing import Callable, Iterator
 
-from custom_types import FileMetadata
 from lsm.block import BlockBuilder
+from lsm.custom_types import FileMetadata
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,

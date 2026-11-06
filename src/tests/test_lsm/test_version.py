@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.custom_types import FileMetadata
+from cailloudb.lsm.custom_types import FileMetadata
 from cailloudb.lsm.sstable import SSTable
 from cailloudb.lsm.table_builder import write_iterator_to_sstables
 from cailloudb.lsm.utils import build_internal_key
@@ -217,27 +217,9 @@ def test_versionset_recover_from_manifest_builds_durable_sstable_map_from_added_
 
     (tmp_path / "CURRENT").write_text("1", encoding="utf-8")
     manifest_path = tmp_path / "MANIFEST-000001"
-    manifest_path.write_bytes(
-        json.dumps(
-            {
-                "deleted_files": [],
-                "added_files": [
-                    [
-                        0,
-                        {
-                            "file_id": 1,
-                            "smallest_key": "ignored-for-recovery",
-                            "largest_key": "ignored-for-recovery",
-                            "file_size": 1,
-                        },
-                    ]
-                ],
-                "next_file_id": 4,
-                "log_number": 1,
-            }
-        ).encode("utf-8")
-        + b"\n"
-    )
+    edit = VersionEdit(next_file_id=4, log_number=1)
+    edit.add_file(0, _meta(1, b"k1", b"k1"))
+    manifest_path.write_bytes(edit.encode())
 
     versions = VersionSet(tmp_path, max_levels=2)
 

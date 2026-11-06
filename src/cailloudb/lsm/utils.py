@@ -1,5 +1,6 @@
 from typing import Literal
 
+from lsm.custom_types import FileMetadata, SerializedFileMetadata
 from settings import (
     INTERNAL_KEY_MAX_SEQ_NUM,
     INTERNAL_KEY_VALUE_TYPE_DELETE,
@@ -48,3 +49,21 @@ def extract_from_internal_key(
     value_type = key_metadata & 0xFF
 
     return table_key, table_seq_num, value_type
+
+
+def encode_file_metadata(file_meta: FileMetadata) -> SerializedFileMetadata:
+    return {
+        "file_id": file_meta["file_id"],
+        "smallest_key": file_meta["smallest_key"].hex(),
+        "largest_key": file_meta["largest_key"].hex(),
+        "file_size": file_meta["file_size"],
+    }
+
+
+def decode_file_metadata(data: SerializedFileMetadata) -> FileMetadata:
+    return FileMetadata(
+        file_id=int(data["file_id"]),
+        smallest_key=bytes.fromhex(str(data["smallest_key"])),
+        largest_key=bytes.fromhex(str(data["largest_key"])),
+        file_size=int(data["file_size"]),
+    )
