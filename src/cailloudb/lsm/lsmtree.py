@@ -109,9 +109,8 @@ class LSMTree:
 
         if self._wal_enabled:
             recovery_log_number = self._versions.recovery_log_number
-            print(recovery_log_number)
 
-            # NOTE: Convention is 0 means no existing log as it starts at 1.
+            # NOTE: Convention - -1 means no existing log as it starts at 1.
             if recovery_log_number == -1:
                 self._wal = Wal(self._path, 1)
                 self._memtable = MemTable(
@@ -141,7 +140,7 @@ class LSMTree:
         )
 
     def _replay_logs_to_memtable(self, recovery_log_number: int):
-        wal_reader = Wal.open_for_recovery(self._path, recovery_log_number)
+        wal_reader = Wal.open_reader(self._path, recovery_log_number)
         for key, seq_num, value in wal_reader.records():
             self._insert(key, seq_num, value)
 

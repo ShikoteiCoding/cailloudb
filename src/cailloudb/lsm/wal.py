@@ -64,7 +64,7 @@ class Wal:
         self._file = self._path.open(mode)  # type: ignore
 
     @classmethod
-    def open_for_recovery(cls, path: Path, log_number: int) -> Wal:
+    def open_reader(cls, path: Path, log_number: int) -> Wal:
         return cls(path=path, log_number=log_number, mode="rb")
 
     def _build_physical_record(self, kind: int, payload: bytes) -> bytes:
