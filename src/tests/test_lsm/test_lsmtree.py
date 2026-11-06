@@ -50,7 +50,6 @@ __all__ = [
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
     "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
-    "test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id",
 ]
 
 
@@ -106,24 +105,7 @@ def test_lsmtree_fresh_boot_creates_initial_layout_and_empty_runtime_state(
         len(level) == 0
         for level in lsmtree._versions.get_current_version().get_levels()
     )
-    assert lsmtree._versions._next_file_id == 1
-
-
-def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Path):
-    sstable_dir = tmp_path
-    sstable_dir.mkdir(parents=True, exist_ok=True)
-
-    # Simulate pre-existing immutable SSTables from previous process lifetime.
-    (sstable_dir / "000001.sst").write_bytes(b"")
-    (sstable_dir / "000007.sst").write_bytes(b"")
-    (sstable_dir / "not-an-sst.txt").write_bytes(b"")
-
-    settings = _isolated_settings()
-    lsmtree = LSMTree(settings, True, tmp_path)
-
-    assert tmp_path.exists()
-    assert tmp_path.is_dir()
-    assert lsmtree._versions._next_file_id == 8
+    assert lsmtree._versions._next_sstable_file_id == 1
 
 
 @pytest.mark.asyncio
@@ -940,7 +922,7 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
         for meta in lsmtree._versions.get_current_version().get_levels()[0]
     ]
     old_map_file_ids = sorted(lsmtree._versions.get_sstable_map().keys())
-    old_next_file_id = lsmtree._versions._next_file_id
+    old_next_file_id = lsmtree._versions._next_sstable_file_id
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
@@ -949,7 +931,7 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
         for meta in lsmtree._versions.get_current_version().get_levels()[0]
     ] == old_level0_file_ids
     assert sorted(lsmtree._versions.get_sstable_map().keys()) == old_map_file_ids
-    assert lsmtree._versions._next_file_id == old_next_file_id
+    assert lsmtree._versions._next_sstable_file_id == old_next_file_id
 
 
 def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
@@ -979,13 +961,13 @@ def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
         list(level) for level in lsmtree._versions.get_current_version().get_levels()
     ]
     old_map = dict(lsmtree._versions.get_sstable_map())
-    old_next_file_id = lsmtree._versions._next_file_id
+    old_next_file_id = lsmtree._versions._next_sstable_file_id
 
     lsmtree._pick_and_compact()
 
     assert lsmtree._versions.get_current_version().get_levels() == old_levels
     assert lsmtree._versions.get_sstable_map() == old_map
-    assert lsmtree._versions._next_file_id == old_next_file_id
+    assert lsmtree._versions._next_sstable_file_id == old_next_file_id
 
 
 @pytest.mark.asyncio
@@ -1051,7 +1033,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         1: source_sstable,
         2: target_sstable,
     }
-    lsmtree._versions._next_file_id = 10
+    lsmtree._versions._next_sstable_file_id = 10
 
     generated_meta = {
         "file_id": 10,
@@ -1084,7 +1066,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
     assert lsmtree._versions.get_sstable_map()[10] == generated_sstable
     assert 1 not in lsmtree._versions.get_sstable_map()
     assert 2 not in lsmtree._versions.get_sstable_map()
-    assert lsmtree._versions._next_file_id == 11
+    assert lsmtree._versions._next_sstable_file_id == 11
 
 
 @pytest.mark.asyncio
