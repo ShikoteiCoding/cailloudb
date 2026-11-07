@@ -50,6 +50,7 @@ __all__ = [
     "test_lsmtree_sync_compact_replaces_levels_and_map",
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
+    "test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotations",
     "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
 ]
 
@@ -1214,6 +1215,43 @@ async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
     assert lsmtree.get(b"key2", 2) == b"val2"
     assert lsmtree.get(b"key3", 2) == b"val3"
     assert lsmtree.get(b"key3", 1) is None
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotations(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        memtable_max_bytes_size=10,  # force one-record memtable rotations
+        sstable_max_file_size=10,
+        compaction_enabled=False,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    await first.put(b"key1", 0, b"val1")
+    await first.put(b"key2", 1, b"val2")
+    await first.put(b"key3", 2, b"val3")
+    await first.put(b"key4", 3, b"val4")
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0 and not first._immutable_memtables
+        ),
+    )
+
+    assert len(first._versions.get_current_version().get_levels()[0]) == 4
+    assert first.get(b"key1", 3) == b"val1"
+    assert first.get(b"key2", 3) == b"val2"
+    assert first.get(b"key3", 3) == b"val3"
+    assert first.get(b"key4", 3) == b"val4"
+
+    second = LSMTree(settings, True, tmp_path)
+
+    assert len(second._versions.get_current_version().get_levels()[0]) == 4
+    assert second.get(b"key1", 3) == b"val1"
+    assert second.get(b"key2", 3) == b"val2"
+    assert second.get(b"key3", 3) == b"val3"
+    assert second.get(b"key4", 3) == b"val4"
 
 
 @pytest.mark.asyncio
