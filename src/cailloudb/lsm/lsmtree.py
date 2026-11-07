@@ -310,9 +310,17 @@ class LSMTree:
 
                 # XXX: Refactor after getting rid of InMemorySSTable
                 new_sstables = []
+                max_file_id = -1
                 for sstable, file_metadata in generated_files:
                     edit.add_file(0, file_metadata)
                     new_sstables.append(sstable)
+                    max_file_id = max(max_file_id, file_metadata["file_id"])
+
+                if max_file_id != -1:
+                    edit.next_file_id = max_file_id + 1
+
+                if self._wal and self._wal_enabled:
+                    edit.log_number = self._wal.log_number
 
                 # commit to disk then remove persisted memtable
                 with self._mem_lock:
