@@ -4,10 +4,12 @@ from typing import Callable, Iterator
 
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
+from lsm.bloom_filter import BloomFilterBuilder
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
     STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
     STRUCT_SSTABLE_FOOTER,
     STRUCT_SSTABLE_INDEX_OFFSET_LEN,
 )
@@ -94,6 +96,8 @@ class TableBuilder:
             self.writer = (self.dir / self.file_name).open(mode="xb")
 
         self.block_builder = BlockBuilder(self.block_size)
+        self.bloom_filter_builder = BloomFilterBuilder()
+        self._last_filter_key: bytes | None = None
         self.index_entries = []
         self.current_offset = 0
 
@@ -115,6 +119,11 @@ class TableBuilder:
         self.largest_key = internal_key
 
         self.block_builder.add(internal_key, value)
+        user_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        if user_key != self._last_filter_key:
+            # Include tombstones so lookups can still find deletions
+            self.bloom_filter_builder.add_key(user_key)
+            self._last_filter_key = user_key
 
     def _flush_block(self):
         block_data, last_internal_key = self.block_builder.finalize()
@@ -127,7 +136,11 @@ class TableBuilder:
         """
         Used by the caller to decide when to split files.
         """
-        return self.current_offset + self.block_builder.estimated_size()
+        return (
+            self.current_offset
+            + self.block_builder.estimated_size()
+            + self.bloom_filter_builder.estimated_size()
+        )
 
     def finish(self) -> tuple[SSTable, FileMetaData]:
         """
@@ -145,6 +158,9 @@ class TableBuilder:
                 STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
             )
         index_size = self.writer.tell() - index_offset
+
+        # persist the bloom filter
+        self.writer.write(self.bloom_filter_builder.persist())
 
         # Write footer
         self.writer.write(

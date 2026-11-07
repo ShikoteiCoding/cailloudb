@@ -32,6 +32,11 @@ STRUCT_SSTABLE_BLOCK_VALUE_LEN = struct.Struct("<I")
 
 TOMBSTONE = b"__INTERNAL_TOMBSTONE_MARKER__"
 
+_DEFAULT_BITS_PER_KEY = 10
+_MASK32 = 0xFFFFFFFF
+_MIN_FILTER_BITS = 64
+_MAX_PROBES = 30
+
 
 @dataclass(slots=True)
 class Settings:
