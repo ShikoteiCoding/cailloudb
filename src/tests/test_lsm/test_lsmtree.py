@@ -12,9 +12,14 @@ from cailloudb.custom_types import MemTableEntry
 from cailloudb.lsm.lsmtree import LSMTree
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.utils import build_internal_key
+from cailloudb.lsm.version import VersionEdit
 from cailloudb.settings import TOMBSTONE, Settings
 
 __all__ = [
+    "test_lsmtree_fresh_boot_creates_initial_layout_and_empty_runtime_state",
+    "test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_duplicates",
+    "test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state",
+    "test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_data",
     "test_lsmtree_internals_iteratively_0_record_memtable",
     "test_lsmtree_internals_iteratively_1_records_memtables",
     "test_lsmtree_functional_put_get_with_wal_enabled_or_disabled",
@@ -45,8 +50,8 @@ __all__ = [
     "test_lsmtree_sync_compact_replaces_levels_and_map",
     "test_lsmtree_sync_compact_then_scan",
     "test_lsmtree_sync_compact_then_get",
+    "test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotations",
     "test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths",
-    "test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id",
 ]
 
 
@@ -83,21 +88,191 @@ def _isolated_settings(**overrides) -> Settings:
     )
 
 
-def test_lsmtree_durable_init_creates_dir_and_recovers_next_file_id(tmp_path: Path):
-    sstable_dir = tmp_path
-    sstable_dir.mkdir(parents=True, exist_ok=True)
+def _read_manifest_edits(tmp_path: Path) -> list[VersionEdit]:
+    manifest_path = tmp_path / "MANIFEST-000001"
+    return [
+        VersionEdit.decode(line) for line in manifest_path.read_bytes().splitlines()
+    ]
 
-    # Simulate pre-existing immutable SSTables from previous process lifetime.
-    (sstable_dir / "000001.sst").write_bytes(b"")
-    (sstable_dir / "000007.sst").write_bytes(b"")
-    (sstable_dir / "not-an-sst.txt").write_bytes(b"")
 
-    settings = _isolated_settings()
-    lsmtree = LSMTree(settings, True, tmp_path)
+def test_lsmtree_fresh_boot_creates_initial_layout_and_empty_runtime_state(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "fresh-db"
+    db_path.mkdir(exist_ok=True)
 
-    assert tmp_path.exists()
-    assert tmp_path.is_dir()
-    assert lsmtree._versions._next_file_id == 8
+    settings = _isolated_settings(compaction_enabled=False)
+    lsmtree = LSMTree(settings, False, db_path)
+
+    assert db_path.exists()
+    assert db_path.is_dir()
+    assert (db_path / "CURRENT").exists()
+    assert (db_path / "MANIFEST-000001").exists()
+    assert (db_path / "wal_000001.log").exists()
+    assert len(lsmtree._memtable) == 0
+    assert all(
+        len(level) == 0
+        for level in lsmtree._versions.get_current_version().get_levels()
+    )
+    assert lsmtree._versions._next_sstable_file_id == 1
+    assert lsmtree._versions.recovery_log_number == -1
+    assert _read_manifest_edits(db_path) == []
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_duplicates(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        # Keep records in WAL and avoid background side effects for this scenario.
+        compaction_enabled=False,
+        memtable_max_bytes_size=1024 * 1024,
+    )
+
+    first = LSMTree(settings, False, tmp_path)
+    await first.put(b"k1", 10, b"v1")
+    await first.put(b"k2", 11, b"v2")
+
+    if first._wal is not None:
+        first._wal.close()
+
+    second = LSMTree(settings, False, tmp_path)
+
+    assert second._versions.recovery_log_number == 1
+    assert second._wal is not None
+    assert second._wal.log_number == 1
+    assert second._memtable.log_number == 1
+    assert len(second._memtable) == 2
+    assert second.get(b"k1", 10) == b"v1"
+    assert second.get(b"k2", 11) == b"v2"
+    assert second._memtable.get(b"k1", 10) == MemTableEntry(
+        key=b"k1", seq_num=10, value=b"v1"
+    )
+    assert second._memtable.get(b"k2", 11) == MemTableEntry(
+        key=b"k2", seq_num=11, value=b"v2"
+    )
+    assert list(second.scan(None, None, 11)) == [(b"k1", b"v1"), (b"k2", b"v2")]
+    assert second._versions.get_current_version().get_levels()[0] == []
+    assert second._versions._next_sstable_file_id == 1
+    assert _read_manifest_edits(tmp_path) == []
+    assert (tmp_path / "wal_000001.log").exists()
+    assert not (tmp_path / "wal_000002.log").exists()
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        compaction_enabled=False,
+        memtable_max_bytes_size=96,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    seq_num = 0
+    while len(first._versions.get_current_version().get_levels()[0]) == 0:
+        key = f"old-{seq_num}".encode("utf-8")
+        val = f"old-val-{seq_num}".encode("utf-8")
+        await first.put(key, seq_num, val)
+        seq_num += 1
+        assert seq_num < 50
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0
+            and not first._immutable_memtables
+            and len(first._versions.get_current_version().get_levels()[0]) >= 1
+        )
+    )
+
+    assert not (tmp_path / "wal_000001.log").exists()
+    assert first._wal is not None
+    assert first._wal.log_number >= 2
+    assert first._wal._path.exists()
+    first_level0_file_ids = [
+        meta["file_id"]
+        for meta in first._versions.get_current_version().get_levels()[0]
+    ]
+    expected_next_file_id = max(first_level0_file_ids) + 1
+    first_manifest_edits = _read_manifest_edits(tmp_path)
+    assert first_manifest_edits
+    assert first_manifest_edits[-1].next_file_id == expected_next_file_id
+    assert first_manifest_edits[-1].log_number == first._wal.log_number
+
+    await first.put(b"new-key", 1000, b"new-value")
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0 and not first._immutable_memtables
+        )
+    )
+    expected_level0_file_ids = [
+        meta["file_id"]
+        for meta in first._versions.get_current_version().get_levels()[0]
+    ]
+
+    second = LSMTree(settings, True, tmp_path)
+    level0_metas = second._versions.get_current_version().get_levels()[0]
+
+    assert [meta["file_id"] for meta in level0_metas] == expected_level0_file_ids
+    assert second._memtable.get(b"new-key", 1000) == MemTableEntry(
+        key=b"new-key", seq_num=1000, value=b"new-value"
+    )
+    assert second.get(b"old-0", 1000) == b"old-val-0"
+    assert second.get(b"new-key", 1000) == b"new-value"
+
+
+@pytest.mark.asyncio
+async def test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_data(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        wal_enabled=True,
+        compaction_enabled=False,
+        memtable_max_bytes_size=96,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    seq_num = 0
+    while len(first._versions.get_current_version().get_levels()[0]) == 0:
+        key = f"stable-{seq_num}".encode("utf-8")
+        val = f"stable-val-{seq_num}".encode("utf-8")
+        await first.put(key, seq_num, val)
+        seq_num += 1
+        assert seq_num < 50
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0
+            and not first._immutable_memtables
+            and len(first._versions.get_current_version().get_levels()[0]) >= 1
+        )
+    )
+
+    assert first._wal is not None
+    first_level0_file_ids = [
+        meta["file_id"]
+        for meta in first._versions.get_current_version().get_levels()[0]
+    ]
+    expected_next_file_id = max(first_level0_file_ids) + 1
+    first_manifest_edits = _read_manifest_edits(tmp_path)
+    assert first_manifest_edits
+    assert first_manifest_edits[-1].next_file_id == expected_next_file_id
+    assert first_manifest_edits[-1].log_number == first._wal.log_number
+
+    active_wal_path = first._wal._path
+    if active_wal_path.exists():
+        active_wal_path.unlink()
+
+    second = LSMTree(settings, True, tmp_path)
+
+    assert len(second._memtable) == 0
+    assert second.get(b"stable-0", 1000) == b"stable-val-0"
+    assert [
+        meta["file_id"]
+        for meta in second._versions.get_current_version().get_levels()[0]
+    ] == first_level0_file_ids
 
 
 @pytest.mark.asyncio
@@ -674,6 +849,31 @@ async def test_rotate_deletes_sealed_wal_after_flush(tmp_path: Path):
     assert len(lsmtree._versions.get_sstable_map()) == 1
 
 
+@pytest.mark.asyncio
+async def test_flush_manifest_tracks_next_file_id_and_log_number(tmp_path: Path):
+    settings = _isolated_settings(
+        memtable_max_bytes_size=10,
+        compaction_enabled=False,
+    )
+    lsmtree = LSMTree(settings, False, tmp_path)
+
+    await lsmtree.put(b"key1", 0, b"val1")
+
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
+
+    manifest_path = tmp_path / "MANIFEST-000001"
+    manifest_lines = manifest_path.read_bytes().splitlines()
+    last_edit = VersionEdit.decode(manifest_lines[-1])
+
+    assert last_edit.next_file_id == 2
+    assert last_edit.log_number == 2
+
+
 def test_lsmtree_flush_empty_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
 
@@ -790,7 +990,7 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
         for meta in lsmtree._versions.get_current_version().get_levels()[0]
     ]
     old_map_file_ids = sorted(lsmtree._versions.get_sstable_map().keys())
-    old_next_file_id = lsmtree._versions._next_file_id
+    old_next_file_id = lsmtree._versions._next_sstable_file_id
 
     lsmtree._commit_compaction_result(lsmtree._pick_and_compact())
 
@@ -799,7 +999,7 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
         for meta in lsmtree._versions.get_current_version().get_levels()[0]
     ] == old_level0_file_ids
     assert sorted(lsmtree._versions.get_sstable_map().keys()) == old_map_file_ids
-    assert lsmtree._versions._next_file_id == old_next_file_id
+    assert lsmtree._versions._next_sstable_file_id == old_next_file_id
 
 
 def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
@@ -829,13 +1029,13 @@ def test_lsmtree_sync_compact_exits_when_picker_returns_no_files(
         list(level) for level in lsmtree._versions.get_current_version().get_levels()
     ]
     old_map = dict(lsmtree._versions.get_sstable_map())
-    old_next_file_id = lsmtree._versions._next_file_id
+    old_next_file_id = lsmtree._versions._next_sstable_file_id
 
     lsmtree._pick_and_compact()
 
     assert lsmtree._versions.get_current_version().get_levels() == old_levels
     assert lsmtree._versions.get_sstable_map() == old_map
-    assert lsmtree._versions._next_file_id == old_next_file_id
+    assert lsmtree._versions._next_sstable_file_id == old_next_file_id
 
 
 @pytest.mark.asyncio
@@ -901,7 +1101,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
         1: source_sstable,
         2: target_sstable,
     }
-    lsmtree._versions._next_file_id = 10
+    lsmtree._versions._next_sstable_file_id = 10
 
     generated_meta = {
         "file_id": 10,
@@ -934,7 +1134,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
     assert lsmtree._versions.get_sstable_map()[10] == generated_sstable
     assert 1 not in lsmtree._versions.get_sstable_map()
     assert 2 not in lsmtree._versions.get_sstable_map()
-    assert lsmtree._versions._next_file_id == 11
+    assert lsmtree._versions._next_sstable_file_id == 11
 
 
 @pytest.mark.asyncio
@@ -1018,6 +1218,43 @@ async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotations(
+    tmp_path: Path,
+):
+    settings = _isolated_settings(
+        memtable_max_bytes_size=10,  # force one-record memtable rotations
+        sstable_max_file_size=10,
+        compaction_enabled=False,
+    )
+    first = LSMTree(settings, True, tmp_path)
+
+    await first.put(b"key1", 0, b"val1")
+    await first.put(b"key2", 1, b"val2")
+    await first.put(b"key3", 2, b"val3")
+    await first.put(b"key4", 3, b"val4")
+
+    _wait_for_condition(
+        lambda: (
+            first._flush_queue.unfinished_tasks == 0 and not first._immutable_memtables
+        ),
+    )
+
+    assert len(first._versions.get_current_version().get_levels()[0]) == 4
+    assert first.get(b"key1", 3) == b"val1"
+    assert first.get(b"key2", 3) == b"val2"
+    assert first.get(b"key3", 3) == b"val3"
+    assert first.get(b"key4", 3) == b"val4"
+
+    second = LSMTree(settings, True, tmp_path)
+
+    assert len(second._versions.get_current_version().get_levels()[0]) == 4
+    assert second.get(b"key1", 3) == b"val1"
+    assert second.get(b"key2", 3) == b"val2"
+    assert second.get(b"key3", 3) == b"val3"
+    assert second.get(b"key4", 3) == b"val4"
+
+
+@pytest.mark.asyncio
 async def test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_paths(
     tmp_path: Path,
 ):
@@ -1037,6 +1274,20 @@ async def test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_
             and not lsmtree._immutable_memtables
         )
     )
+
+    manifest_edits = _read_manifest_edits(tmp_path)
+    assert manifest_edits
+    assert all(edit.next_file_id != -1 for edit in manifest_edits)
+    assert all(edit.log_number != -1 for edit in manifest_edits)
+    for edit in manifest_edits:
+        if not edit.added_files:
+            continue
+
+        file_ids = [meta["file_id"] for _, meta in edit.added_files]
+        assert edit.next_file_id == max(file_ids) + 1
+
+    assert lsmtree._wal is not None
+    assert manifest_edits[-1].log_number == lsmtree._wal.log_number
 
     levels = lsmtree._versions.get_current_version().get_levels()
     level0 = levels[0]

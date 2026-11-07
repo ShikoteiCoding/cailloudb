@@ -80,9 +80,7 @@ class BaseStore(_BaseStore):
 
     def close(self) -> None:
         """
-        Close the store gracefully.
-
-        - Release the lock file
+        Close the store gracefully and release the lock file.
         """
         if self._lock_file is not None:
             try:
@@ -171,24 +169,24 @@ class BaseStore(_BaseStore):
 class InMemoryStore(BaseStore):
     def __init__(self, path: Path | str):
         self._settings = Settings()
+        self._path = Path(path)
+
+        self.init()
 
         self._seq = SeqNum()
-        self._path = Path(path)
         self._tree = LSMTree(
             settings=self._settings, durable_sstable=False, path=self._path
         )
-
-        self.init()
 
 
 class DurableStore(BaseStore):
     def __init__(self, path: Path | str):
         self._settings = Settings()
+        self._path = Path(path)
+
+        self.init()
 
         self._seq = SeqNum()
-        self._path = Path(path)
         self._tree = LSMTree(
             settings=self._settings, durable_sstable=True, path=self._path
         )
-
-        self.init()

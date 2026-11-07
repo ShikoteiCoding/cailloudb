@@ -27,14 +27,3 @@ class SeqNum:
 
     def __int__(self) -> int:
         return self._value
-
-
-class FileMetadata(TypedDict):
-    """
-    Represents an SSTable file on disk.
-    """
-
-    file_id: int
-    smallest_key: bytes
-    largest_key: bytes
-    file_size: int
