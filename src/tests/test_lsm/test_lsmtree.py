@@ -1226,7 +1226,7 @@ async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotation
         sstable_max_file_size=10,
         compaction_enabled=False,
     )
-    first = LSMTree(settings, False, tmp_path)
+    first = LSMTree(settings, True, tmp_path)
 
     await first.put(b"key1", 0, b"val1")
     await first.put(b"key2", 1, b"val2")
@@ -1235,10 +1235,8 @@ async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotation
 
     _wait_for_condition(
         lambda: (
-            first._flush_queue.unfinished_tasks == 0
-            and not first._immutable_memtables
+            first._flush_queue.unfinished_tasks == 0 and not first._immutable_memtables
         ),
-        10
     )
 
     assert len(first._versions.get_current_version().get_levels()[0]) == 4
@@ -1247,7 +1245,7 @@ async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotation
     assert first.get(b"key3", 3) == b"val3"
     assert first.get(b"key4", 3) == b"val4"
 
-    second = LSMTree(settings, False, tmp_path)
+    second = LSMTree(settings, True, tmp_path)
 
     assert len(second._versions.get_current_version().get_levels()[0]) == 4
     assert second.get(b"key1", 3) == b"val1"
