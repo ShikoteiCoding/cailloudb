@@ -2,15 +2,16 @@ from math import log
 from zlib import crc32
 
 from settings import (
-    _DEFAULT_BITS_PER_KEY,
-    _MASK32,
-    _MAX_PROBES,
-    _MIN_FILTER_BITS,
+    BLOOM_FILTER_VERSION,
+    DEFAULT_BITS_PER_KEY,
+    MASK32,
+    MAX_PROBES,
+    MIN_FILTER_BITS,
 )
 
 """
 Bloom filter (full filter, one per SSTable)
-    [bit array][num_probes: 1 byte]
+    [bit array][num_probes: 1 byte][version: 1 byte]
 
 Hash each key once -> size the array -> set k bits per key
 
@@ -27,20 +28,20 @@ After compaction (or any new SSTable) the builder is reset and a new array is al
 
 def _num_probes_for(bits_per_key: int) -> int:
     probes = int(bits_per_key * log(2))
-    return max(1, min(_MAX_PROBES, probes))
+    return max(1, min(MAX_PROBES, probes))
 
 
 def _probe(h: int, bits: int, num_probes: int):
     # bit rotation to generate a second hash, rotation guarante to be non-zero
-    delta = ((h >> 17) | (h << 15) | 1) & _MASK32
+    delta = ((h >> 17) | (h << 15) | 1) & MASK32
     for _ in range(num_probes):
         yield h % bits
-        h = (h + delta) & _MASK32
+        h = (h + delta) & MASK32
 
 
 class BloomFilterBuilder:
     """
-    SSTable Bloom Filter Writer
+    SSTable Bloom Filter Builder
     """
 
     #: Target bits per inserted key
@@ -52,7 +53,7 @@ class BloomFilterBuilder:
     #: 32-bit hashes collected for the current SSTable
     hashes: list[int]
 
-    def __init__(self, bits_per_key: int = _DEFAULT_BITS_PER_KEY):
+    def __init__(self, bits_per_key: int = DEFAULT_BITS_PER_KEY):
         self.bits_per_key = bits_per_key
         self.num_probes = _num_probes_for(bits_per_key)
         self.hashes: list[int] = []
@@ -65,21 +66,23 @@ class BloomFilterBuilder:
         self.hashes.append(crc32(key))
 
     def estimated_size(self) -> int:
-        """Return the encoded filter size, including the probe-count byte"""
+        """
+        Return the encoded filter size, including probe count and version
+        """
         total_keys = len(self.hashes)
         # m = n * bits_per_key, with a minimum size for small tables
-        bits = max(_MIN_FILTER_BITS, total_keys * self.bits_per_key)
-        # a whole number of bytes, plus one byte for the probe count
-        return (bits + 7) // 8 + 1
+        bits = max(MIN_FILTER_BITS, total_keys * self.bits_per_key)
+        # a whole number of bytes, plus probe count and version
+        return (bits + 7) // 8 + 2
 
-    def write(self) -> bytes:
+    def pack(self) -> bytes:
         """
         Pack the current set of keys into an immutable filter
 
         Encoding:
-            [bit array][num_probes]
+            [bit array][num_probes][version]
         """
-        nbytes = self.estimated_size() - 1
+        nbytes = self.estimated_size() - 2
         bits = nbytes * 8
         array = bytearray(nbytes)
 
@@ -88,16 +91,16 @@ class BloomFilterBuilder:
             for bitpos in _probe(h, bits, self.num_probes):
                 array[bitpos // 8] |= 1 << (bitpos % 8)
 
-        array.append(self.num_probes)
+        array.extend((self.num_probes, BLOOM_FILTER_VERSION))
         return bytes(array)
 
-    def persist(self) -> bytes:
+    def finalize(self) -> bytes:
         """
         Return the finalized filter and reset for the next SSTable
 
         After compaction (or any new file) the key set changes, so bit array must be rebuilt from scratch
         """
-        filter_data = self.write()
+        filter_data = self.pack()
         self.hashes = []
         return filter_data
 
@@ -107,7 +110,7 @@ class BloomFilterReader:
     SSTable Bloom Filter Reader
 
     The filter is immutable
-    Missing or too-short filter data is treated as a possible match
+    Missing, too-short, or unsupported filter data is treated as a possible match
     """
 
     #: Packed filter blob
@@ -121,13 +124,16 @@ class BloomFilterReader:
 
     def __init__(self, filter_data: bytes):
         self.data = filter_data
-        if len(filter_data) < _MIN_FILTER_BITS // 8 + 1:
-            self.bits = 0
-            self.num_probes = 0
+        self.bits = 0
+        self.num_probes = 0
+
+        if len(filter_data) < MIN_FILTER_BITS // 8 + 2:
+            return
+        if filter_data[-1] != BLOOM_FILTER_VERSION:
             return
 
-        self.num_probes = filter_data[-1]
-        self.bits = (len(filter_data) - 1) * 8
+        self.num_probes = filter_data[-2]
+        self.bits = (len(filter_data) - 2) * 8
 
     def may_find(self, key: bytes) -> bool:
         """
@@ -135,11 +141,10 @@ class BloomFilterReader:
         False means the key is missing
         """
 
-        # insurance if filter is missing or too short, treat as a possible match
         if self.bits == 0:
             return True
 
-        if not 1 <= self.num_probes <= _MAX_PROBES:
+        if not 1 <= self.num_probes <= MAX_PROBES:
             return True
 
         array = self.data

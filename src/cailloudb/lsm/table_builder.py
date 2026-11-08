@@ -76,6 +76,8 @@ class TableBuilder:
     #: SSTable default block size
     sstable_block_default_size: int
 
+    _bloom_builder: BloomFilterBuilder
+
     def __init__(
         self,
         file_id: int,
@@ -97,8 +99,7 @@ class TableBuilder:
             self.writer = (self.dir / self.file_name).open(mode="xb")
 
         self.block_builder = BlockBuilder(self.block_size)
-        self.bloom_filter_builder = BloomFilterBuilder()
-        self._last_filter_key: bytes | None = None
+        self._bloom_builder = BloomFilterBuilder()
         self.index_entries = []
         self.current_offset = 0
 
@@ -116,15 +117,15 @@ class TableBuilder:
 
         if self.smallest_key == b"":
             self.smallest_key = internal_key
+        self.block_builder.add(internal_key, value)
+        table_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        last_table_key = self.largest_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        if not self.largest_key or table_key != last_table_key:
+            # Include tombstones so lookups can still find deletions
+            self._bloom_builder.add_key(table_key)
+
         # The latest added key is always the largest
         self.largest_key = internal_key
-
-        self.block_builder.add(internal_key, value)
-        user_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
-        if user_key != self._last_filter_key:
-            # Include tombstones so lookups can still find deletions
-            self.bloom_filter_builder.add_key(user_key)
-            self._last_filter_key = user_key
 
     def _flush_block(self):
         block_data, last_internal_key = self.block_builder.finalize()
@@ -140,7 +141,7 @@ class TableBuilder:
         return (
             self.current_offset
             + self.block_builder.estimated_size()
-            + self.bloom_filter_builder.estimated_size()
+            + self._bloom_builder.estimated_size()
         )
 
     def finish(self) -> tuple[SSTable, FileMetaData]:
@@ -160,8 +161,8 @@ class TableBuilder:
             )
         index_size = self.writer.tell() - index_offset
 
-        # persist the bloom filter
-        self.writer.write(self.bloom_filter_builder.persist())
+        # Write the Bloom filter
+        self.writer.write(self._bloom_builder.finalize())
 
         # Write footer
         self.writer.write(

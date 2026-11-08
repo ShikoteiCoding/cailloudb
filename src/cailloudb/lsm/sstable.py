@@ -35,6 +35,8 @@ class SSTable(abc.ABC):
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
+    _bloom_filter: BloomFilterReader
+
     def _load_index(self):
         """
         Reads the footer and loads the index and optional Bloom filter.
@@ -56,7 +58,7 @@ class SSTable(abc.ABC):
         bloom_filter_size = footer_offset - (index_offset + index_size)
         if bloom_filter_size < 0:
             raise ValueError(f"Invalid Bloom filter bounds in SSTable: {self.path}")
-        self.bloom_filter = BloomFilterReader(self.file.read(bloom_filter_size))
+        self._bloom_filter = BloomFilterReader(self.file.read(bloom_filter_size))
 
         # 3. Parse Index Entries
         cursor = 0
@@ -99,7 +101,7 @@ class SSTable(abc.ABC):
         """
         Get value or tombstone at or before `seq_num`.
         """
-        if not self.bloom_filter.may_find(key):
+        if not self._bloom_filter.may_find(key):
             return None
 
         # Build a target internal key from key/seq_num pair

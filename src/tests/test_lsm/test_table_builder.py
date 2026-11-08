@@ -77,6 +77,36 @@ def test_table_builder_add(table_builder_not_durable: TableBuilder):
     assert table_builder_not_durable.largest_key == b"internal_key_2"
 
 
+@pytest.mark.parametrize("table_key", [b"", b"apple"])
+def test_table_builder_bloom_deduplicates_versions_across_blocks(table_key: bytes):
+    builder = TableBuilder(
+        file_id=1,
+        sstable_block_default_size=1,
+        durable_sstable=False,
+    )
+    for seq_num in range(20, 0, -1):
+        is_deleted = seq_num == 20
+        builder.add(
+            build_internal_key(table_key, seq_num, is_deleted),
+            TOMBSTONE if is_deleted else b"value",
+        )
+
+    sstable, _ = builder.finish()
+    data = sstable.file.read()
+    index_offset, index_size, _ = STRUCT_SSTABLE_FOOTER.unpack(
+        data[-STRUCT_SSTABLE_FOOTER.size :]
+    )
+    filter_data = data[index_offset + index_size : -STRUCT_SSTABLE_FOOTER.size]
+
+    assert len(filter_data) == 10
+    assert sstable.get(table_key, 20) == SSTableEntry(
+        key=table_key, seq_num=20, value=TOMBSTONE
+    )
+    assert sstable.get(table_key, 19) == SSTableEntry(
+        key=table_key, seq_num=19, value=b"value"
+    )
+
+
 def test_table_builder_flushes_block():
     table_builder = TableBuilder(
         file_id=0,
