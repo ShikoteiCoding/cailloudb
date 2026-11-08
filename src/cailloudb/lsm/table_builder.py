@@ -118,11 +118,11 @@ class TableBuilder:
         if self.smallest_key == b"":
             self.smallest_key = internal_key
         self.block_builder.add(internal_key, value)
-        user_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
-        last_user_key = self.largest_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
-        if not self.largest_key or user_key != last_user_key:
+        table_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        last_table_key = self.largest_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        if not self.largest_key or table_key != last_table_key:
             # Include tombstones so lookups can still find deletions
-            self._bloom_builder.add_key(user_key)
+            self._bloom_builder.add_key(table_key)
 
         # The latest added key is always the largest
         self.largest_key = internal_key
