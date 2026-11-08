@@ -4,10 +4,12 @@ from typing import Callable, Iterator
 
 from custom_types import FileMetaData
 from lsm.block import BlockBuilder
+from lsm.bloom_filter import BloomFilterBuilder
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
     STRUCT_INTERNAL_KEY_LEN,
+    STRUCT_INTERNAL_KEY_METADATA,
     STRUCT_SSTABLE_FOOTER,
     STRUCT_SSTABLE_INDEX_OFFSET_LEN,
 )
@@ -74,6 +76,8 @@ class TableBuilder:
     #: SSTable default block size
     sstable_block_default_size: int
 
+    _bloom_builder: BloomFilterBuilder
+
     def __init__(
         self,
         file_id: int,
@@ -94,6 +98,7 @@ class TableBuilder:
             self.writer = (self.dir / self.file_name).open(mode="xb")
 
         self.block_builder = BlockBuilder(self.block_size)
+        self._bloom_builder = BloomFilterBuilder()
         self.index_entries = []
         self.current_offset = 0
 
@@ -111,10 +116,15 @@ class TableBuilder:
 
         if self.smallest_key == b"":
             self.smallest_key = internal_key
+        self.block_builder.add(internal_key, value)
+        table_key = internal_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        last_table_key = self.largest_key[: -STRUCT_INTERNAL_KEY_METADATA.size]
+        if not self.largest_key or table_key != last_table_key:
+            # Include tombstones so lookups can still find deletions
+            self._bloom_builder.add_key(table_key)
+
         # The latest added key is always the largest
         self.largest_key = internal_key
-
-        self.block_builder.add(internal_key, value)
 
     def _flush_block(self):
         block_data, last_internal_key = self.block_builder.finalize()
@@ -127,7 +137,11 @@ class TableBuilder:
         """
         Used by the caller to decide when to split files.
         """
-        return self.current_offset + self.block_builder.estimated_size()
+        return (
+            self.current_offset
+            + self.block_builder.estimated_size()
+            + self._bloom_builder.estimated_size()
+        )
 
     def finish(self) -> tuple[SSTable, FileMetaData]:
         """
@@ -145,6 +159,9 @@ class TableBuilder:
                 STRUCT_SSTABLE_INDEX_OFFSET_LEN.pack(block_offset, block_len)
             )
         index_size = self.writer.tell() - index_offset
+
+        # Write the Bloom filter
+        self.writer.write(self._bloom_builder.finalize())
 
         # Write footer
         self.writer.write(
