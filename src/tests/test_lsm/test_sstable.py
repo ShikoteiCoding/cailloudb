@@ -83,6 +83,44 @@ def test_sstable_inmemory_get_missing_key_in_range(memtable: MemTable):
     assert sstable.get(b"banana", 2) is None
 
 
+@pytest.mark.parametrize(
+    "filter_data",
+    [
+        bytes.fromhex("0880b942881150410601"),
+        bytes(8) + b"\x06\x02",
+        b"",
+    ],
+    ids=["version-1", "unknown-version", "no-filter"],
+)
+def test_sstable_bloom_filter_versions(memtable: MemTable, filter_data: bytes):
+    memtable.insert(b"apple", 1, b"red")
+    memtable.insert(b"banana", 2, b"yellow")
+    memtable.insert(b"cherry", 3, TOMBSTONE)
+    sstable, _ = write_iterator_to_sstables(
+        memtable,
+        _fixed_file_id_generator(1),
+        SSTABLE_MAX_FILE_SIZE,
+        SSTABLE_BLOCK_DEFAULT_SIZE,
+        False,
+    )[0]
+
+    data = sstable.file.read()
+    footer = data[-STRUCT_SSTABLE_FOOTER.size :]
+    index_offset, index_size, _ = STRUCT_SSTABLE_FOOTER.unpack(footer)
+    data = data[: index_offset + index_size] + filter_data + footer
+    reloaded = InMemorySSTable(1, io.BufferedReader(io.BytesIO(data)))
+
+    assert reloaded.get(b"apple", 3) == SSTableEntry(
+        key=b"apple", seq_num=1, value=b"red"
+    )
+    assert reloaded.get(b"banana", 3) == SSTableEntry(
+        key=b"banana", seq_num=2, value=b"yellow"
+    )
+    assert reloaded.get(b"cherry", 3) == SSTableEntry(
+        key=b"cherry", seq_num=3, value=TOMBSTONE
+    )
+
+
 def test_sstable_inmemory_iter(memtable: MemTable):
     memtable.insert(key=b"apple", seq_num=1, value=b"red")
     memtable.insert(key=b"banana", seq_num=2, value=b"yellow")
