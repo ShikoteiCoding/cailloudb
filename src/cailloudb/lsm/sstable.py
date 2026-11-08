@@ -2,10 +2,11 @@ import abc
 import bisect
 import io
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Iterator
 
 from custom_types import SSTableEntry
 from lsm.block import BlockReader
+from lsm.bloom_filter import BloomFilterReader
 from lsm.utils import build_internal_key, extract_from_internal_key
 from settings import (
     INTERNAL_KEY_VALUE_TYPE_DELETE,
@@ -34,12 +35,15 @@ class SSTable(abc.ABC):
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
+    _bloom_filter: BloomFilterReader
+
     def _load_index(self):
         """
-        Reads the footer and parses the index block into memory.
+        Reads the footer and loads the index and optional Bloom filter.
         """
         # Read footer
         self.file.seek(-STRUCT_SSTABLE_FOOTER.size, io.SEEK_END)
+        footer_offset = self.file.tell()
         footer_bytes = self.file.read(STRUCT_SSTABLE_FOOTER.size)
         index_offset, index_size, magic = STRUCT_SSTABLE_FOOTER.unpack(footer_bytes)
 
@@ -49,6 +53,12 @@ class SSTable(abc.ABC):
         # Read index
         self.file.seek(index_offset)
         index_bytes = self.file.read(index_size)
+
+        # filter makes every lookup fall through to blocks
+        bloom_filter_size = footer_offset - (index_offset + index_size)
+        if bloom_filter_size < 0:
+            raise ValueError(f"Invalid Bloom filter bounds in SSTable: {self.path}")
+        self._bloom_filter = BloomFilterReader(self.file.read(bloom_filter_size))
 
         # 3. Parse Index Entries
         cursor = 0
@@ -91,6 +101,9 @@ class SSTable(abc.ABC):
         """
         Get value or tombstone at or before `seq_num`.
         """
+        if not self._bloom_filter.may_find(key):
+            return None
+
         # Build a target internal key from key/seq_num pair
         # Passing "is_deleted" True to respect Value Type ordering
         target_internal_key = build_internal_key(key, seq_num, True)
