@@ -84,21 +84,33 @@ def test_version_edit_add_and_delete_file():
     assert edit.deleted_files == [(0, 3)]
 
 
-def test_version_edit_decode_from_manifest(tmp_path: Path):
-    manifest_line = (
-        b'{"deleted_files": [[0, 3]], "added_files": [], '
-        b'"next_file_id": 11, "log_number": 5}\n'
-    )
-    manifest_path = tmp_path / "MANIFEST-000001"
-    manifest_path.write_bytes(manifest_line)
+@pytest.mark.parametrize(
+    "edit",
+    [
+        VersionEdit(),
+        VersionEdit(deleted_files=[(0, 3)], next_file_id=11, log_number=5),
+        VersionEdit(
+            deleted_files=[(1, 9), (2, 10)],
+            added_files=[
+                (0, _meta(7, b"a", b"b")),
+                (2, _meta(8, b"k1", b"k9")),
+            ],
+            next_file_id=42,
+            log_number=8,
+        ),
+    ],
+)
+def test_version_edit_decode_from_manifest(edit: VersionEdit):
+    encoded_line = edit.encode()
 
-    line = manifest_path.read_bytes().splitlines()[0]
-    decoded = VersionEdit.decode(line)
+    assert encoded_line.endswith(b"\n")
 
-    assert decoded.deleted_files == [(0, 3)]
-    assert decoded.added_files == []
-    assert decoded.next_file_id == 11
-    assert decoded.log_number == 5
+    decoded = VersionEdit.decode(encoded_line.splitlines()[0])
+
+    assert decoded.deleted_files == edit.deleted_files
+    assert decoded.added_files == edit.added_files
+    assert decoded.next_file_id == edit.next_file_id
+    assert decoded.log_number == edit.log_number
 
 
 def test_version_find_files_containing_handles_l0_overlap_in_reverse_order():
