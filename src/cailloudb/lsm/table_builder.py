@@ -2,9 +2,9 @@ import io
 from pathlib import Path
 from typing import Callable, Iterator
 
-from custom_types import FileMetadata
 from lsm.block import BlockBuilder
 from lsm.bloom_filter import BloomFilterBuilder
+from lsm.custom_types import FileMetadata
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
@@ -27,13 +27,12 @@ def write_iterator_to_sstables(
     Consumes a sorted containor iterator and chunks it into multiple SSTables using TableBuilder.
     """
     results = []
-    current_file_id = file_id_generator()
     builder = None
 
     for internal_key, value in iterator:
         if builder is None:
             builder = TableBuilder(
-                file_id=current_file_id,
+                file_id=file_id_generator(),
                 sstable_block_default_size=target_block_size,
                 durable_sstable=durable_sstable,
                 sstable_dir=sstable_dir,
@@ -44,7 +43,6 @@ def write_iterator_to_sstables(
         # Split if full
         if builder.estimated_size() >= max_file_size:
             results.append(builder.finish())
-            current_file_id = file_id_generator()
             builder = None
 
     # Flush the remaining

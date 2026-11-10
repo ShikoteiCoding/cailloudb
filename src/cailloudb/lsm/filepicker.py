@@ -1,4 +1,4 @@
-from custom_types import FileMetadata
+from lsm.custom_types import FileMetadata
 from lsm.version import Version
 
 
