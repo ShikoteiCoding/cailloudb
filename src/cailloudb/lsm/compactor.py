@@ -6,7 +6,7 @@ from lsm.table_builder import write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
 
 if TYPE_CHECKING:
-    from custom_types import FileMetadata
+    from lsm.custom_types import FileMetadata
     from lsm.sstable import SSTable
 
 
