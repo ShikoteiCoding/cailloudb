@@ -3,8 +3,8 @@ from pathlib import Path
 from typing import Callable, Iterator
 
 from lsm.block import BlockBuilder
-from lsm.custom_types import FileMetadata
 from lsm.bloom_filter import BloomFilterBuilder
+from lsm.custom_types import FileMetadata
 from lsm.sstable import DurableSSTable, InMemorySSTable, SSTable
 from settings import (
     SSTABLE_MAGIC_NUMBER,
