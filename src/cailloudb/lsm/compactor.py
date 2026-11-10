@@ -6,7 +6,7 @@ from lsm.table_builder import write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
 
 if TYPE_CHECKING:
-    from custom_types import FileMetaData
+    from custom_types import FileMetadata
     from lsm.sstable import SSTable
 
 
@@ -39,7 +39,7 @@ class Compactor:
         sstables_to_merge: list[SSTable],
         file_id_generator: Callable[[], int],
         level_sstable_size: int,
-    ) -> list[tuple[SSTable, FileMetaData]]:
+    ) -> list[tuple[SSTable, FileMetadata]]:
         """
         K-way merge list of sstables and write new ones.
         """

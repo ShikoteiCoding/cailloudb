@@ -10,8 +10,9 @@ from lsm.compactor import Compactor
 from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
-from lsm.table_builder import FileMetaData, write_iterator_to_sstables
+from lsm.table_builder import FileMetadata, write_iterator_to_sstables
 from lsm.utils import extract_from_internal_key
+from lsm.version import VersionEdit, VersionSet
 from settings import (
     TOMBSTONE,
     Settings,
@@ -28,11 +29,14 @@ class LSMTree:
     Core assumption is single writer. So it is kept free of lock logic.
     """
 
+    #: Runtime settings
+    _settings: Settings
+
     #: Generic configurations
     _memtable_size: int
     _sstable_size: int
-    _max_levels: int
     _wal_enabled: bool
+    _durable_sstable: bool
 
     #: Active memtable instance for in-memory O(1) writes
     _memtable: MemTable
@@ -40,16 +44,10 @@ class LSMTree:
     #: Immutable memtables waiting to be flushed
     _immutable_memtables: list[MemTable]
 
-    #: SSTables map from "file_id" to SSTable pointer
-    _sstables_map: dict[int, SSTable]
+    #: Versions coordinator
+    _versions: VersionSet
 
-    #: List of levels of SSTable metadata
-    #: l0 -> overlapping ranges, update history, ordered by seq_num
-    #: l{1...N} -> non overlapping ranges, no history, sorted by key
-    _levels: list[list[FileMetaData]]
-
-    #: Next file id for .sst
-    _next_file_id: int
+    #: SSTable state is owned by VersionSet.
 
     #: Write-ahead log writer
     _wal: Wal | None
@@ -70,20 +68,8 @@ class LSMTree:
     _compaction_thread: threading.Thread | None
     _compaction_interval_s: int
 
-    #: File ID lock
-    _file_id_lock: threading.Lock
-
     #: Lock for memory buffers
     _mem_lock: threading.Lock
-
-    #: Lock for sstables
-    _sst_lock: threading.Lock
-
-    #: Runtime settings
-    _settings: Settings
-
-    #: Durability control for SSTables
-    _durable_sstable: bool
 
     #: Path to metadata
     _path: Path
@@ -96,12 +82,8 @@ class LSMTree:
         self._wal_enabled = self._settings.wal_enabled
         self._memtable_size = self._settings.memtable_max_bytes_size
         self._sstable_size = self._settings.sstable_max_file_size
-        self._max_levels = self._settings.sstable_max_levels
 
         self._immutable_memtables = []
-        self._sstables_map = {}
-        self._levels = [[] for _ in range(self._max_levels)]
-        self._next_file_id = 1
 
         self._flush_queue = queue.Queue()
         self._flush_thread = None
@@ -110,12 +92,7 @@ class LSMTree:
         self._compaction_enabled = self._settings.compaction_enabled
         self._compaction_interval_s = self._settings.compaction_interval_s
 
-        self._file_id_lock = threading.Lock()
         self._mem_lock = threading.Lock()
-        self._sst_lock = threading.Lock()
-
-        if self._durable_sstable:
-            self._next_file_id = self._recover_next_file_id(self._path)
 
         self.init()
 
@@ -142,26 +119,16 @@ class LSMTree:
         )
 
         self._file_picker = FilePicker(
-            self._levels,
-            self._max_levels,
+            self._settings.sstable_max_levels,
             sstable_l0_compaction_trigger=self._settings.sstable_l0_compaction_trigger,
             sstable_l1_max_bytes=self._settings.sstable_l1_max_bytes,
             sstable_level_multiplier=self._settings.sstable_level_multiplier,
         )
 
-    @staticmethod
-    def _recover_next_file_id(sstable_dir: Path) -> int:
-        """
-        Return a file id strictly greater than any existing .sst file name.
-        """
-        max_file_id = 0
-
-        for path in sstable_dir.glob("*.sst"):
-            stem = path.stem
-            if stem.isdigit():
-                max_file_id = max(max_file_id, int(stem))
-
-        return max_file_id + 1
+        self._versions = VersionSet(
+            self._path,
+            self._settings.sstable_max_levels,
+        )
 
     async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -220,45 +187,7 @@ class LSMTree:
             if entry:
                 return None if entry["value"] == TOMBSTONE else entry["value"]
 
-        # Check SSTables in reverse order
-        for level_idx, level_files in enumerate(self._levels):
-            if not level_files:
-                continue
-
-            if level_idx == 0:
-                # Level 0 can overlap, all files must be checked
-                for meta in reversed(level_files):
-                    # XXX: cpu-costly, should be optimized
-                    if (
-                        extract_from_internal_key(meta["smallest_key"])[0]
-                        <= key
-                        <= extract_from_internal_key(meta["largest_key"])[0]
-                    ):
-                        sstable = self._sstables_map[meta["file_id"]]
-                        entry = sstable.get(key, seq_num)
-                        if entry:
-                            return (
-                                None if entry["value"] == TOMBSTONE else entry["value"]
-                            )
-            else:
-                # Levels > 0 are non-overlapping and sorted by key range.
-                for meta in level_files:
-                    smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
-                    largest_key = extract_from_internal_key(meta["largest_key"])[0]
-
-                    # Exit early because of no overlap property
-                    if key < smallest_key:
-                        break
-
-                    if key > largest_key:
-                        continue
-
-                    sstable = self._sstables_map[meta["file_id"]]
-                    entry = sstable.get(key, seq_num)
-                    if entry:
-                        return None if entry["value"] == TOMBSTONE else entry["value"]
-                    break
-        return
+        return self._versions.get(key, seq_num)
 
     def scan(
         self, start_key: bytes | None, end_key: bytes | None, seq_num: int
@@ -281,25 +210,7 @@ class LSMTree:
         for imm in self._immutable_memtables:
             iterators.append(imm.scan(start_key, end_key, seq_num))
 
-        for level_idx, level_files in enumerate(self._levels):
-            for meta in level_files:
-                # XXX: cpu-costly, should be optimized
-                file_smallest_key = extract_from_internal_key(meta["smallest_key"])[0]
-                file_largest_key = extract_from_internal_key(meta["largest_key"])[0]
-
-                if start_key is not None and file_largest_key < start_key:
-                    continue
-
-                if end_key is not None and file_smallest_key >= end_key:
-                    # Continue on level 0 as key overlap will exist
-                    if level_idx == 0:
-                        continue
-                    # Exit loop as level n+1 are non overlapping and sorted
-                    else:
-                        break
-
-                sst = self._sstables_map[meta["file_id"]]
-                iterators.append(sst.scan(start_key, end_key, seq_num))
+        iterators.append(self._versions.scan(start_key, end_key, seq_num))
 
         # Aggregator function for whichever iterator
         def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
@@ -353,17 +264,6 @@ class LSMTree:
                 max_bytes_size=self._memtable_size, log_number=log_number
             )
 
-    def file_id_generator(self) -> int:
-        """
-        Thread-safe file ID Generator.
-
-        XXX: Should be moved to FileManager / VersionManager when introduced.
-        """
-        with self._file_id_lock:
-            file_id = self._next_file_id
-            self._next_file_id += 1
-            return file_id
-
     def _start_flush_worker(self) -> None:
         """
         Start a flush task in a worker if not already running.
@@ -382,23 +282,26 @@ class LSMTree:
         while True:
             try:
                 memtable = self._flush_queue.get()
-
+                edit = VersionEdit()
                 # XXX: Handle retries and failures
-                generated_ssstables = write_iterator_to_sstables(
+                generated_files = write_iterator_to_sstables(
                     iterator=memtable.__iter__(),
-                    file_id_generator=self.file_id_generator,
+                    file_id_generator=self._versions.file_id_generator,
                     max_file_size=self._sstable_size,
                     target_block_size=self._settings.sstable_block_default_size,
                     durable_sstable=self._durable_sstable,
                     sstable_dir=self._path,
                 )
 
-                with self._sst_lock:
-                    for sstable, file_metadata in generated_ssstables:
-                        self._sstables_map[file_metadata["file_id"]] = sstable
-                        self._levels[0].append(file_metadata)
+                # XXX: Refactor after getting rid of InMemorySSTable
+                new_sstables = []
+                for sstable, file_metadata in generated_files:
+                    edit.add_file(0, file_metadata)
+                    new_sstables.append(sstable)
 
+                # commit to disk then remove persisted memtable
                 with self._mem_lock:
+                    self._versions.log_and_apply(edit, new_sstables)
                     self._immutable_memtables.remove(memtable)
 
                 if self._wal and memtable.log_number:
@@ -414,45 +317,46 @@ class LSMTree:
     ) -> tuple[
         int,
         int,
-        list[FileMetaData],
-        list[FileMetaData],
-        list[tuple[SSTable, FileMetaData]],
+        list[FileMetadata],
+        list[FileMetadata],
+        list[tuple[SSTable, FileMetadata]],
     ]:
         """
         Synchronous in-process compaction task of SSTables from L0 to Lmax.
 
         NOTE: This is for now a full compaction (not partial) because
-        it acts on the entire level, not specific files.
+        it acts on the entire source level, not specific files.
 
         Properties:
             - Key ordering guarantee inside the SSTable
             - No Key range overlap accross SSTables
         """
-        with self._sst_lock:
-            source_level = self._file_picker.pick_compaction_level()
-            if source_level == -1:
-                return -1, -1, [], [], []
 
-            target_level = source_level + 1
-            source_metas, target_metas = self._file_picker.pick_compaction_files(
-                source_level, target_level
-            )
-            input_metas = source_metas + target_metas
-            if not input_metas:
-                return -1, -1, [], [], []
-            input_sstables = [
-                self._sstables_map[meta["file_id"]] for meta in input_metas
-            ]
+        version = self._versions.get_current_version()
+        source_level = self._file_picker.pick_compaction_level(version)
+        if source_level == -1:
+            return -1, -1, [], [], []
+
+        target_level = source_level + 1
+        source_metas_to_compact, target_metas_to_compact = (
+            self._file_picker.pick_compaction_files(source_level, target_level, version)
+        )
+        input_metas_to_compact = source_metas_to_compact + target_metas_to_compact
+        if not input_metas_to_compact:
+            return -1, -1, [], [], []
+        input_sstables_to_compact = [
+            self._versions.get_sstable_map()[meta["file_id"]]
+            for meta in input_metas_to_compact
+        ]
 
         return (
             source_level,
             target_level,
-            source_metas,
-            target_metas,
-            # This can safely be outside the lock as it is purely additive
+            source_metas_to_compact,
+            target_metas_to_compact,
             self._compactor.compact(
-                sstables_to_merge=input_sstables,
-                file_id_generator=self.file_id_generator,  # XXX: resolve concurrency with flush
+                sstables_to_merge=input_sstables_to_compact,
+                file_id_generator=self._versions.file_id_generator,  # XXX: resolve concurrency with flush
                 level_sstable_size=self._sstable_size
                 * target_level,  # XXX: naive heuristic
             ),
@@ -476,29 +380,34 @@ class LSMTree:
         result: tuple[
             int,
             int,
-            list[FileMetaData],
-            list[FileMetaData],
-            list[tuple[SSTable, FileMetaData]],
+            list[FileMetadata],
+            list[FileMetadata],
+            list[tuple[SSTable, FileMetadata]],
         ],
     ) -> None:
-        source_level, target_level, source_metas, target_metas, generated_files = result
+        (
+            source_level,
+            target_level,
+            source_metas_compacted,
+            target_metas_compacted,
+            generated_files,
+        ) = result
         if not generated_files:
             return
 
-        generated_metas = []
+        edit = VersionEdit()
 
-        with self._sst_lock:
-            for sstable, meta in generated_files:
-                self._sstables_map[sstable.file_id] = sstable
-                generated_metas.append(meta)
+        sstables = []
+        for sstable, file_metadata in generated_files:
+            edit.add_file(target_level, file_metadata)
+            sstables.append(sstable)
 
-            self._file_picker.apply_compaction_result(
-                source_level,
-                target_level,
-                source_metas,
-                target_metas,
-                generated_metas,
-            )
+        for source_metadata in source_metas_compacted:
+            edit.delete_file(source_level, source_metadata["file_id"])
+        for target_metadata in target_metas_compacted:
+            edit.delete_file(target_level, target_metadata["file_id"])
+
+        self._versions.log_and_apply(edit, sstables)
 
     def _compaction_worker(self) -> None:
         """
@@ -511,8 +420,4 @@ class LSMTree:
         """
         while True:
             time.sleep(self._compaction_interval_s)
-            self._compaction_tick()
-
-    def _compaction_tick(self) -> None:
-        # XXX: Apply retry and error handling
-        self._commit_compaction_result(self._pick_and_compact())
+            self._commit_compaction_result(self._pick_and_compact())
