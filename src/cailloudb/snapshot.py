@@ -17,7 +17,7 @@ class DbSnapshot:
         self._store = store
         self._seq = int(store._seq) - 1
 
-    async def get(self, key: bytes) -> bytes:
+    async def get(self, key: bytes) -> bytes | None:
         return await self._store.get_at(key, seq_num=self._seq)
 
     def scan(
