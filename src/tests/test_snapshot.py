@@ -22,10 +22,10 @@ async def test_snapshot_get(tmp_path: Path):
     await db.put(b"key1", b"val1")
 
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 0
+    assert snap.get_sequence_number() == 0
 
     await db.put(b"key1", b"val2")
-    assert await db.latest_sequence_number() == 2
+    assert db.store.get_latest_sequence_number() == 2
 
     assert await snap.get(b"key1") == b"val1"
     assert await db.get(b"key1") == b"val2"
@@ -39,10 +39,10 @@ async def test_snapshot_delete_replay(tmp_path: Path):
     await db.put(b"k", b"v1")
 
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 0
+    assert snap.get_sequence_number() == 0
 
     await db.delete(b"k")
-    assert await db.latest_sequence_number() == 2
+    assert db.store.get_latest_sequence_number() == 2
 
     assert await snap.get(b"k") == b"v1"
     assert await db.get(b"k") is None
@@ -56,7 +56,7 @@ async def test_snapshot_reput(tmp_path: Path):
     await db.put(b"b", b"2")
 
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 0
+    assert snap.get_sequence_number() == 0
 
     await db.delete(b"b")
     await db.put(b"b", b"9")
@@ -70,20 +70,20 @@ async def test_snapshot_scan(tmp_path: Path):
     store = InMemoryStore(tmp_path)
     db = DbBuilder(store).build()
 
-    await db.put(b"a", b"1")
-    await db.put(b"b", b"2")
+    await db.put(b"key1", b"val1")
+    await db.put(b"key2", b"val2")
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 1
+    assert snap.get_sequence_number() == 1
 
-    await db.put(b"c", b"3")
-    await db.delete(b"b")
+    await db.put(b"key3", b"val3")
+    await db.delete(b"key2")
 
     items = [item async for item in snap.scan()]
-    assert items == [(b"a", b"1"), (b"b", b"2")]
-    assert await store.latest_sequence_number() == 4
+    assert items == [(b"key1", b"val1"), (b"key2", b"val2")]
+    assert db.store.get_latest_sequence_number() == 4
 
     items = [item async for item in db.scan()]
-    assert items == [(b"a", b"1"), (b"c", b"3")]
+    assert items == [(b"key1", b"val1"), (b"key3", b"val3")]
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_dbbuilder_snapshot(tmp_path: Path):
 
     await db.put(b"k", b"v")
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 0
+    assert snap.get_sequence_number() == 0
 
     assert await snap.get(b"k") == b"v"
 
@@ -107,7 +107,7 @@ async def test_scan_same_range_semantics_on_snapshot(tmp_path: Path):
     await db.put(b"a", b"1")
     await db.put(b"c", b"3")
     snap = db.snapshot()
-    assert await snap.latest_sequence_number() == 2
+    assert snap.get_sequence_number() == 2
 
     assert [item async for item in snap.scan()] == [
         (b"a", b"1"),

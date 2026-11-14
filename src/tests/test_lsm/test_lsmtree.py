@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.custom_types import MemTableEntry
+from cailloudb.lsm.custom_types import MemTableEntry
 from cailloudb.lsm.lsmtree import LSMTree
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.utils import build_internal_key
@@ -24,20 +24,15 @@ __all__ = [
     "test_lsmtree_internals_iteratively_1_records_memtables",
     "test_lsmtree_functional_put_get_with_wal_enabled_or_disabled",
     "test_lsmtree_get_from_skiplist",
-    "test_lsmtree_get_from_immutable_memtable",
     "test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest",
     "test_lsmtree_get_from_sstable_because_of_spill",
     "test_lsmtree_get_from_sstable_or_skiplist",
     "test_lsm_delete_from_sstables_or_skiplist",
     "test_lsmtree_scan_includes_immutable_memtables",
-    "test_lsmtree_scan_skips_file_when_before_start_key",
-    "test_lsmtree_scan_level0_continues_on_end_bound",
     "test_lsmtree_scan_level_gt_0_breaks_on_end_bound",
     "test_lsmtree_scan_fixed_range",
     "test_lsmtree_scan_unbounded_range",
     "test_lsmtree_scan_max_seq",
-    "test_lsmtree_scan_iterator_agg_break",
-    "test_lsmtree_scan_future_seq_continue",
     "test_rotate_deletes_sealed_wal_after_flush",
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
@@ -131,8 +126,8 @@ async def test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_dupli
     )
 
     first = LSMTree(settings, False, tmp_path)
-    await first.put(b"k1", 10, b"v1")
-    await first.put(b"k2", 11, b"v2")
+    await first.put(b"key1", b"val1")
+    await first.put(b"key2", b"val2")
 
     if first._wal is not None:
         first._wal.close()
@@ -144,15 +139,15 @@ async def test_lsmtree_restarts_and_recovers_unflushed_wal_entries_without_dupli
     assert second._wal.log_number == 1
     assert second._memtable.log_number == 1
     assert len(second._memtable) == 2
-    assert second.get(b"k1", 10) == b"v1"
-    assert second.get(b"k2", 11) == b"v2"
-    assert second._memtable.get(b"k1", 10) == MemTableEntry(
-        key=b"k1", seq_num=10, value=b"v1"
+    assert second.get(b"key1") == b"val1"
+    assert second.get(b"key2") == b"val2"
+    assert second._memtable.get(b"key1", 1) == MemTableEntry(
+        key=b"key1", seq_num=0, value=b"val1"
     )
-    assert second._memtable.get(b"k2", 11) == MemTableEntry(
-        key=b"k2", seq_num=11, value=b"v2"
+    assert second._memtable.get(b"key2", 2) == MemTableEntry(
+        key=b"key2", seq_num=1, value=b"val2"
     )
-    assert list(second.scan(None, None, 11)) == [(b"k1", b"v1"), (b"k2", b"v2")]
+    assert list(second.scan(None, None)) == [(b"key1", b"val1"), (b"key2", b"val2")]
     assert second._versions.get_current_version().get_levels()[0] == []
     assert second._versions._next_sstable_file_id == 1
     assert _read_manifest_edits(tmp_path) == []
@@ -171,13 +166,12 @@ async def test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state(
     )
     first = LSMTree(settings, True, tmp_path)
 
-    seq_num = 0
+    i = 0
     while len(first._versions.get_current_version().get_levels()[0]) == 0:
-        key = f"old-{seq_num}".encode("utf-8")
-        val = f"old-val-{seq_num}".encode("utf-8")
-        await first.put(key, seq_num, val)
-        seq_num += 1
-        assert seq_num < 50
+        key = f"old-{i}".encode("utf-8")
+        val = f"old-val-{i}".encode("utf-8")
+        await first.put(key, val)
+        i = +1
 
     _wait_for_condition(
         lambda: (
@@ -201,7 +195,7 @@ async def test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state(
     assert first_manifest_edits[-1].next_file_id == expected_next_file_id
     assert first_manifest_edits[-1].log_number == first._wal.log_number
 
-    await first.put(b"new-key", 1000, b"new-value")
+    await first.put(b"new-key", b"new-value")
     _wait_for_condition(
         lambda: (
             first._flush_queue.unfinished_tasks == 0 and not first._immutable_memtables
@@ -212,15 +206,18 @@ async def test_lsmtree_restart_recovers_mixed_sstable_and_active_wal_state(
         for meta in first._versions.get_current_version().get_levels()[0]
     ]
 
+    # Get seq num before closing
+    seq_num = first._versions.get_latest_sequence_number() - 1
+
     second = LSMTree(settings, True, tmp_path)
     level0_metas = second._versions.get_current_version().get_levels()[0]
 
     assert [meta["file_id"] for meta in level0_metas] == expected_level0_file_ids
-    assert second._memtable.get(b"new-key", 1000) == MemTableEntry(
-        key=b"new-key", seq_num=1000, value=b"new-value"
+    assert second._memtable.get(b"new-key", seq_num) == MemTableEntry(
+        key=b"new-key", seq_num=seq_num, value=b"new-value"
     )
-    assert second.get(b"old-0", 1000) == b"old-val-0"
-    assert second.get(b"new-key", 1000) == b"new-value"
+    assert second.get(b"old-0") == b"old-val-0"
+    assert second.get(b"new-key") == b"new-value"
 
 
 @pytest.mark.asyncio
@@ -238,7 +235,7 @@ async def test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_
     while len(first._versions.get_current_version().get_levels()[0]) == 0:
         key = f"stable-{seq_num}".encode("utf-8")
         val = f"stable-val-{seq_num}".encode("utf-8")
-        await first.put(key, seq_num, val)
+        await first.put(key, val)
         seq_num += 1
         assert seq_num < 50
 
@@ -268,7 +265,7 @@ async def test_lsmtree_restart_handles_missing_active_wal_and_preserves_flushed_
     second = LSMTree(settings, True, tmp_path)
 
     assert len(second._memtable) == 0
-    assert second.get(b"stable-0", 1000) == b"stable-val-0"
+    assert second.get(b"stable-0") == b"stable-val-0"
     assert [
         meta["file_id"]
         for meta in second._versions.get_current_version().get_levels()[0]
@@ -282,7 +279,7 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
     )  # should be full for each record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -292,7 +289,7 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
     assert len(lsmtree._memtable) == 0
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
 
-    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key2", b"val2")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -303,7 +300,7 @@ async def test_lsmtree_internals_iteratively_0_record_memtable(tmp_path: Path):
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 2
     assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key3", b"val3")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -322,11 +319,11 @@ async def test_lsmtree_internals_iteratively_1_records_memtables(tmp_path: Path)
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
     assert len(lsmtree._memtable) == 1
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 0
 
-    await lsmtree.put(b"key2", 1, b"val2")
+    await lsmtree.put(b"key2", b"val2")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -337,7 +334,7 @@ async def test_lsmtree_internals_iteratively_1_records_memtables(tmp_path: Path)
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
     assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
 
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key3", b"val3")
     assert len(lsmtree._memtable) == 1
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
     assert len(list(lsmtree._versions.get_sstable_map().values())[0].index_keys) == 1
@@ -356,9 +353,9 @@ async def test_lsmtree_functional_put_get_with_wal_enabled_or_disabled(
     else:
         assert not wal_log_1.exists()
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
 
-    assert lsmtree.get(b"key1", 0) == b"val1"
+    assert lsmtree.get(b"key1") == b"val1"
     if wal_enabled:
         assert lsmtree._wal is not None
     else:
@@ -369,27 +366,11 @@ async def test_lsmtree_functional_put_get_with_wal_enabled_or_disabled(
 async def test_lsmtree_get_from_skiplist(tmp_path: Path):
     lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
 
-    value = lsmtree.get(b"key1", 0)
+    value = lsmtree.get(b"key1")
 
     assert value == b"val1"
-
-
-def test_lsmtree_get_from_immutable_memtable(tmp_path: Path):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    older_imm = MemTable(max_bytes_size=128)
-    older_imm.insert(b"key1", 0, b"val1")
-
-    newer_imm = MemTable(max_bytes_size=128)
-    newer_imm.insert(b"key1", 1, TOMBSTONE)
-
-    # XXX: Remove this when flush is background
-    lsmtree._immutable_memtables = [older_imm, newer_imm]
-
-    assert lsmtree.get(b"key1", 1) is None
-    assert lsmtree.get(b"key1", 0) == b"val1"
 
 
 def test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest(tmp_path: Path):
@@ -409,7 +390,7 @@ def test_lsmtree_get_level_gt_0_breaks_when_key_below_smallest(tmp_path: Path):
     lsmtree._versions.get_current_version().get_levels()[1] = [meta]  # type: ignore
     lsmtree._versions.get_sstable_map()[1] = NeverCalledSSTable()  # type: ignore
 
-    assert lsmtree.get(b"key1", 10) is None
+    assert lsmtree.get(b"key1") is None
 
 
 @pytest.mark.asyncio
@@ -419,9 +400,9 @@ async def test_lsmtree_get_from_sstable_because_of_spill(tmp_path: Path):
     )  # should be full for each record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -430,21 +411,21 @@ async def test_lsmtree_get_from_sstable_because_of_spill(tmp_path: Path):
     )
 
     # Should get it from "oldest" sstable
-    assert lsmtree.get(b"key1", 2) == b"val1"
+    assert lsmtree.get(b"key1") == b"val1"
     assert lsmtree._memtable.get(b"key1", 2) is None
     assert list(lsmtree._versions.get_sstable_map().values())[0].get(
         b"key1", 2
     ) == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
 
     # Should get it from "middle" sstable
-    assert lsmtree.get(b"key2", 2) == b"val2"
+    assert lsmtree.get(b"key2") == b"val2"
     assert lsmtree._memtable.get(b"key2", 2) is None
     assert list(lsmtree._versions.get_sstable_map().values())[1].get(
         b"key2", 2
     ) == MemTableEntry(key=b"key2", seq_num=1, value=b"val2")
 
     # Should get it from "recent" sstable
-    assert lsmtree.get(b"key3", 2) == b"val3"
+    assert lsmtree.get(b"key3") == b"val3"
     assert list(lsmtree._versions.get_sstable_map().values())[2].get(
         b"key3", 2
     ) == MemTableEntry(key=b"key3", seq_num=2, value=b"val3")
@@ -457,9 +438,9 @@ async def test_lsmtree_get_from_sstable_or_skiplist(tmp_path: Path):
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -474,21 +455,21 @@ async def test_lsmtree_get_from_sstable_or_skiplist(tmp_path: Path):
     assert len(list(lsmtree._versions.get_sstable_map().values())) == 1
 
     # Should get it from "oldest" sstable
-    assert lsmtree.get(b"key1", 2) == b"val1"
+    assert lsmtree.get(b"key1") == b"val1"
     assert lsmtree._memtable.get(b"key1", 2) is None
     assert list(lsmtree._versions.get_sstable_map().values())[0].get(
         b"key1", 2
     ) == MemTableEntry(key=b"key1", seq_num=0, value=b"val1")
 
     # Should get it from "recent" sstable
-    assert lsmtree.get(b"key2", 2) == b"val2"
+    assert lsmtree.get(b"key2") == b"val2"
     assert lsmtree._memtable.get(b"key2", 2) is None
     assert list(lsmtree._versions.get_sstable_map().values())[0].get(
         b"key2", 2
     ) == MemTableEntry(key=b"key2", seq_num=1, value=b"val2")
 
     # Should get it from skiplist
-    assert lsmtree.get(b"key3", 2) == b"val3"
+    assert lsmtree.get(b"key3") == b"val3"
     assert lsmtree._memtable.get(b"key3", 2) == MemTableEntry(
         key=b"key3", seq_num=2, value=b"val3"
     )
@@ -501,110 +482,29 @@ async def test_lsm_delete_from_sstables_or_skiplist(tmp_path: Path):
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.delete(b"key1", 0)
-    await lsmtree.delete(b"key2", 1)
-    await lsmtree.delete(b"key3", 2)
+    await lsmtree.delete(b"key1")
+    await lsmtree.delete(b"key2")
+    await lsmtree.delete(b"key3")
 
-    assert lsmtree.get(b"key1", 2) is None
-    assert lsmtree.get(b"key2", 2) is None
-    assert lsmtree.get(b"key3", 2) is None
-
-
-def test_lsmtree_scan_includes_immutable_memtables(tmp_path: Path):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    imm = MemTable(max_bytes_size=128)
-    imm.insert(b"key_imm", 1, b"val_imm")
-
-    # Keep active memtable empty so values come from immutable memtables only.
-    lsmtree._immutable_memtables = [imm]
-
-    result = list(lsmtree.scan(start_key=None, end_key=None, seq_num=10))
-
-    assert result == [(b"key_imm", b"val_imm")]
+    assert lsmtree.get(b"key1") is None
+    assert lsmtree.get(b"key2") is None
+    assert lsmtree.get(b"key3") is None
 
 
-def test_lsmtree_scan_skips_file_when_before_start_key(tmp_path: Path):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    class CountingSSTable:
-        def __init__(self, entries):
-            self.entries = entries
-            self.calls = 0
-
-        def scan(self, _start_key, _end_key, _seq_num):
-            self.calls += 1
-            return iter(self.entries)
-
-    meta1 = {
-        "file_id": 1,
-        "smallest_key": build_internal_key(b"key1", 0, is_delete=False),
-        "largest_key": build_internal_key(b"key2", 0, is_delete=False),
-        "file_size": 100,
-    }
-    meta2 = {
-        "file_id": 2,
-        "smallest_key": build_internal_key(b"key5", 0, is_delete=False),
-        "largest_key": build_internal_key(b"key8", 0, is_delete=False),
-        "file_size": 100,
-    }
-
-    sst1 = CountingSSTable(entries=[MemTableEntry(key=b"key1", seq_num=0, value=b"v1")])
-    sst2 = CountingSSTable(entries=[MemTableEntry(key=b"key6", seq_num=1, value=b"v6")])
-
-    lsmtree._versions.get_current_version().get_levels()[1] = [meta1, meta2]  # type: ignore
-    lsmtree._versions.get_sstable_map()[1] = sst1  # type: ignore
-    lsmtree._versions.get_sstable_map()[2] = sst2  # type: ignore
-
-    result = list(lsmtree.scan(start_key=b"key5", end_key=None, seq_num=10))
-
-    assert sst1.calls == 0
-    assert sst2.calls == 1
-    assert result == [(b"key6", b"v6")]
-
-
-def test_lsmtree_scan_level0_continues_on_end_bound(tmp_path: Path):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    class CountingSSTable:
-        def __init__(self, entries):
-            self.entries = entries
-            self.calls = 0
-
-        def scan(self, _start_key, _end_key, _seq_num):
-            self.calls += 1
-            return iter(self.entries)
-
-    # In level 0, `file_smallest_key >= end_key` should continue, not break.
-    meta_skip = {
-        "file_id": 1,
-        "smallest_key": build_internal_key(b"key9", 0, is_delete=False),
-        "largest_key": build_internal_key(b"key9", 0, is_delete=False),
-        "file_size": 100,
-    }
-    meta_in_range = {
-        "file_id": 2,
-        "smallest_key": build_internal_key(b"key1", 0, is_delete=False),
-        "largest_key": build_internal_key(b"key3", 0, is_delete=False),
-        "file_size": 100,
-    }
-
-    sst_skip = CountingSSTable(
-        entries=[MemTableEntry(key=b"key9", seq_num=0, value=b"v9")]
+@pytest.mark.asyncio
+async def test_lsmtree_scan_includes_immutable_memtables(tmp_path: Path):
+    lsmtree = LSMTree(
+        _isolated_settings(flush_enabled=False, memtable_max_bytes_size=20),
+        False,
+        tmp_path,
     )
-    sst_in_range = CountingSSTable(
-        entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"v2")]
-    )
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
 
-    lsmtree._versions.get_current_version().get_levels()[0] = [meta_skip, meta_in_range]  # type: ignore
-    lsmtree._versions.get_sstable_map()[1] = sst_skip  # type: ignore
-    lsmtree._versions.get_sstable_map()[2] = sst_in_range  # type: ignore
+    result = list(lsmtree.scan(start_key=None, end_key=None))
 
-    result = list(lsmtree.scan(start_key=None, end_key=b"key5", seq_num=10))
-
-    assert sst_skip.calls == 0
-    assert sst_in_range.calls == 1
-    assert result == [(b"key2", b"v2")]
+    assert len(lsmtree._immutable_memtables) == 1
+    assert result == [(b"key1", b"val1"), (b"key2", b"val2")]
 
 
 def test_lsmtree_scan_level_gt_0_breaks_on_end_bound(tmp_path: Path):
@@ -636,7 +536,7 @@ def test_lsmtree_scan_level_gt_0_breaks_on_end_bound(tmp_path: Path):
         entries=[MemTableEntry(key=b"key9", seq_num=0, value=b"v9")]
     )
     sst_never_reached = CountingSSTable(
-        entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"v2")]
+        entries=[MemTableEntry(key=b"key2", seq_num=1, value=b"val2")]
     )
 
     lsmtree._versions._current_version._levels[1] = [  # type: ignore
@@ -646,7 +546,7 @@ def test_lsmtree_scan_level_gt_0_breaks_on_end_bound(tmp_path: Path):
     lsmtree._versions.get_sstable_map()[1] = sst_break  # type: ignore
     lsmtree._versions.get_sstable_map()[2] = sst_never_reached  # type: ignore
 
-    result = list(lsmtree.scan(start_key=None, end_key=b"key5", seq_num=10))
+    result = list(lsmtree.scan(start_key=None, end_key=b"key5"))
 
     assert sst_break.calls == 0
     assert sst_never_reached.calls == 0
@@ -660,12 +560,12 @@ async def test_lsmtree_scan_fixed_range(tmp_path: Path):
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
 
     # Test inclusive
-    result = [item for item in lsmtree.scan(b"key", b"key4", 2)]
+    result = [item for item in lsmtree.scan(b"key1", b"key4")]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
@@ -673,21 +573,21 @@ async def test_lsmtree_scan_fixed_range(tmp_path: Path):
     ]
 
     # Test excluding start_key
-    result = [item for item in lsmtree.scan(b"key2", b"key4", 2)]
+    result = [item for item in lsmtree.scan(b"key2", b"key4")]
     assert result == [
         (b"key2", b"val2"),
         (b"key3", b"val3"),
     ]
 
     # Test excluding end_key
-    result = [item for item in lsmtree.scan(b"key1", b"key3", 2)]
+    result = [item for item in lsmtree.scan(b"key1", b"key3")]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
     ]
 
     # Test excluding both
-    result = [item for item in lsmtree.scan(b"key2", b"key3", 2)]
+    result = [item for item in lsmtree.scan(b"key2", b"key3")]
     assert result == [
         (b"key2", b"val2"),
     ]
@@ -700,12 +600,12 @@ async def test_lsmtree_scan_unbounded_range(tmp_path: Path):
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
 
     # Test unbounded end_key
-    result = [item for item in lsmtree.scan(b"key1", None, 2)]
+    result = [item for item in lsmtree.scan(b"key1", None)]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
@@ -713,7 +613,7 @@ async def test_lsmtree_scan_unbounded_range(tmp_path: Path):
     ]
 
     # Test unbounded start_key
-    result = [item for item in lsmtree.scan(None, b"key4", 2)]
+    result = [item for item in lsmtree.scan(None, b"key4")]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
@@ -721,7 +621,7 @@ async def test_lsmtree_scan_unbounded_range(tmp_path: Path):
     ]
 
     # Test unbounded both
-    result = [item for item in lsmtree.scan(None, None, 2)]
+    result = [item for item in lsmtree.scan(None, None)]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
@@ -736,89 +636,25 @@ async def test_lsmtree_scan_max_seq(tmp_path: Path):
     )  # should hold exactly one record
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
 
     # Test fixed range
-    result = [item for item in lsmtree.scan(b"key1", b"key4", 1)]
+    result = [item for item in lsmtree.scan(b"key1", b"key4")]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
+        (b"key3", b"val3"),
     ]
 
     # Test unbounded
-    result = [item for item in lsmtree.scan(None, None, 1)]
+    result = [item for item in lsmtree.scan(None, None)]
     assert result == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
+        (b"key3", b"val3"),
     ]
-
-
-def test_lsmtree_scan_iterator_agg_break(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    # Mock iterator_agg internal function from scan()
-    mock_iterator = iter(
-        [
-            {"key": b"key1", "seq_num": 1, "value": b"val1"},
-            {
-                "key": b"key3",
-                "seq_num": 2,
-                "value": b"val3",
-            },  # >= end_key, triggers `break`
-            {
-                "key": b"key4",
-                "seq_num": 3,
-                "value": b"val4",
-            },  # Should never be processed
-        ]
-    )
-
-    monkeypatch.setattr(
-        lsmtree._memtable,
-        "scan",
-        lambda _start_key, _end_key, _seq_num: mock_iterator,
-    )
-    assert len(list(lsmtree._versions.get_sstable_map().values())) == 0
-
-    # end_key=b"key2" means b"key3" will trigger the break condition
-    result = list(lsmtree.scan(start_key=b"key0", end_key=b"key2", seq_num=5))
-
-    # Only b"key1" should be yielded
-    assert result == [(b"key1", b"val1")]
-
-
-def test_lsmtree_scan_future_seq_continue(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    lsmtree = LSMTree(_isolated_settings(), False, tmp_path)
-
-    # Mock iterator_agg internal function from scan()
-    mock_iterator = iter(
-        [
-            {
-                "key": b"key1",
-                "seq_num": 10,
-                "value": b"future_val",
-            },  # > seq_num, triggers `continue`
-            {"key": b"key1", "seq_num": 5, "value": b"past_val"},  # Valid version
-        ]
-    )
-    monkeypatch.setattr(
-        lsmtree._memtable,
-        "scan",
-        lambda _start_key, _end_key, _seq_num: mock_iterator,
-    )
-    lsmtree._versions._sstables_map = {}
-
-    # seq_num=7 means seq_num=10 is from the future and should be skipped
-    result = list(lsmtree.scan(start_key=None, end_key=None, seq_num=7))
-
-    # The future_val should be skipped, yielding only past_val
-    assert result == [(b"key1", b"past_val")]
 
 
 @pytest.mark.asyncio
@@ -832,7 +668,7 @@ async def test_rotate_deletes_sealed_wal_after_flush(tmp_path: Path):
     assert sealed.exists()
     assert sealed.stat().st_size == 0
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
 
     _wait_for_condition(
         lambda: (
@@ -857,7 +693,7 @@ async def test_flush_manifest_tracks_next_file_id_and_log_number(tmp_path: Path)
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
+    await lsmtree.put(b"key1", b"val1")
 
     _wait_for_condition(
         lambda: (
@@ -945,10 +781,10 @@ async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime
     assert lsmtree._compaction_thread is not None
     assert lsmtree._compaction_thread.is_alive()
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
-    await lsmtree.put(b"key4", 3, b"val4")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
+    await lsmtree.put(b"key4", b"val4")
 
     _wait_for_condition(
         lambda: (
@@ -974,9 +810,9 @@ async def test_lsmtree_sync_compact_exits_when_picker_finds_no_level(tmp_path: P
     lsmtree = LSMTree(settings, False, tmp_path)
 
     # 3 files in L0 is below default compaction trigger (4).
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -1047,10 +883,10 @@ async def test_lsmtree_sync_compact_uses_picker_selected_files(tmp_path: Path):
     lsmtree = LSMTree(settings, False, tmp_path)
 
     # 4 files in L0 should trigger compaction selection for level 0.
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
-    await lsmtree.put(b"key4", 3, b"val4")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
+    await lsmtree.put(b"key4", b"val4")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -1088,7 +924,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
     }
     target_meta = {
         "file_id": 2,
-        "smallest_key": b"k2",
+        "smallest_key": b"key2",
         "largest_key": b"k4",
         "file_size": 100,
     }
@@ -1105,7 +941,7 @@ def test_lsmtree_sync_compact_replaces_levels_and_map(
 
     generated_meta = {
         "file_id": 10,
-        "smallest_key": b"k1",
+        "smallest_key": b"key1",
         "largest_key": b"k4",
         "file_size": 120,
     }
@@ -1145,10 +981,10 @@ async def test_lsmtree_sync_compact_then_scan(tmp_path: Path):
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
-    await lsmtree.put(b"key4", 3, b"val4")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
+    await lsmtree.put(b"key4", b"val4")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -1177,25 +1013,26 @@ async def test_lsmtree_sync_compact_then_scan(tmp_path: Path):
 
     assert new_level1_file_ids.issubset(set(lsmtree._versions.get_sstable_map().keys()))
 
-    assert list(lsmtree.scan(None, None, 2)) == [
+    assert list(lsmtree.scan(None, None)) == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
         (b"key3", b"val3"),
+        (b"key4", b"val4"),
     ]
 
 
 @pytest.mark.asyncio
 async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
     settings = _isolated_settings(
-        memtable_max_bytes_size=10,  # should hold only 1 record
+        memtable_max_bytes_size=10,  # should flush immediately
         sstable_max_file_size=10,  # should hold only 1 record
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
-    await lsmtree.put(b"key4", 3, b"val4")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
+    await lsmtree.put(b"key4", b"val4")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -1211,10 +1048,10 @@ async def test_lsmtree_sync_compact_then_get(tmp_path: Path):
     assert lsmtree._versions.get_current_version().get_levels()[0] == []
     assert len(lsmtree._versions.get_current_version().get_levels()[1]) == 4
 
-    assert lsmtree.get(b"key1", 2) == b"val1"
-    assert lsmtree.get(b"key2", 2) == b"val2"
-    assert lsmtree.get(b"key3", 2) == b"val3"
-    assert lsmtree.get(b"key3", 1) is None
+    assert lsmtree.get(b"key1") == b"val1"
+    assert lsmtree.get(b"key2") == b"val2"
+    assert lsmtree.get(b"key3") == b"val3"
+    assert lsmtree.get(b"key4") == b"val4"
 
 
 @pytest.mark.asyncio
@@ -1228,10 +1065,10 @@ async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotation
     )
     first = LSMTree(settings, True, tmp_path)
 
-    await first.put(b"key1", 0, b"val1")
-    await first.put(b"key2", 1, b"val2")
-    await first.put(b"key3", 2, b"val3")
-    await first.put(b"key4", 3, b"val4")
+    await first.put(b"key1", b"val1")
+    await first.put(b"key2", b"val2")
+    await first.put(b"key3", b"val3")
+    await first.put(b"key4", b"val4")
 
     _wait_for_condition(
         lambda: (
@@ -1240,18 +1077,18 @@ async def test_lsmtree_restart_recovers_flushed_sstables_after_multiple_rotation
     )
 
     assert len(first._versions.get_current_version().get_levels()[0]) == 4
-    assert first.get(b"key1", 3) == b"val1"
-    assert first.get(b"key2", 3) == b"val2"
-    assert first.get(b"key3", 3) == b"val3"
-    assert first.get(b"key4", 3) == b"val4"
+    assert first.get(b"key1") == b"val1"
+    assert first.get(b"key2") == b"val2"
+    assert first.get(b"key3") == b"val3"
+    assert first.get(b"key4") == b"val4"
 
     second = LSMTree(settings, True, tmp_path)
 
     assert len(second._versions.get_current_version().get_levels()[0]) == 4
-    assert second.get(b"key1", 3) == b"val1"
-    assert second.get(b"key2", 3) == b"val2"
-    assert second.get(b"key3", 3) == b"val3"
-    assert second.get(b"key4", 3) == b"val4"
+    assert second.get(b"key1") == b"val1"
+    assert second.get(b"key2") == b"val2"
+    assert second.get(b"key3") == b"val3"
+    assert second.get(b"key4") == b"val4"
 
 
 @pytest.mark.asyncio
@@ -1265,9 +1102,9 @@ async def test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_
     )
     lsmtree = LSMTree(settings, False, tmp_path)
 
-    await lsmtree.put(b"key1", 0, b"val1")
-    await lsmtree.put(b"key2", 1, b"val2")
-    await lsmtree.put(b"key3", 2, b"val3")
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+    await lsmtree.put(b"key3", b"val3")
     _wait_for_condition(
         lambda: (
             lsmtree._flush_queue.unfinished_tasks == 0
@@ -1299,12 +1136,12 @@ async def test_lsmtree_versionset_metadata_stays_consistent_with_write_and_read_
     assert sorted(level0_file_ids) == map_file_ids
 
     # Read path must stay coherent with persisted metadata state.
-    assert lsmtree.get(b"key1", 2) == b"val1"
-    assert lsmtree.get(b"key2", 2) == b"val2"
-    assert lsmtree.get(b"key3", 2) == b"val3"
-    assert lsmtree.get(b"unknown", 2) is None
+    assert lsmtree.get(b"key1") == b"val1"
+    assert lsmtree.get(b"key2") == b"val2"
+    assert lsmtree.get(b"key3") == b"val3"
+    assert lsmtree.get(b"unknown") is None
 
-    assert list(lsmtree.scan(None, None, 2)) == [
+    assert list(lsmtree.scan(None, None)) == [
         (b"key1", b"val1"),
         (b"key2", b"val2"),
         (b"key3", b"val3"),

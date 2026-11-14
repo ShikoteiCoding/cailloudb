@@ -25,7 +25,7 @@ async def test_store_get_never_raises(tmp_path: Path):
     assert await db.get(b"test2") == b"val2"
     assert await db.get(b"test3") is None
 
-    assert await db.latest_sequence_number() == 2
+    assert db.store.get_latest_sequence_number() == 2
 
 
 @pytest.mark.asyncio
@@ -41,7 +41,7 @@ async def test_store_delete_never_raises(tmp_path: Path):
 
     await db.delete(b"test1")
 
-    assert await db.latest_sequence_number() == 4
+    assert db.store.get_latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
@@ -64,7 +64,7 @@ async def test_store_write_batch(tmp_path: Path):
     assert await db.get(b"test2") is None
     assert await db.get(b"test3") == b"val3"
 
-    assert await db.latest_sequence_number() == 4
+    assert db.store.get_latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
