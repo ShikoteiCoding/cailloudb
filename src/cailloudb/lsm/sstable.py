@@ -4,9 +4,9 @@ import io
 from pathlib import Path
 from typing import Iterator
 
-from custom_types import SSTableEntry
 from lsm.block import BlockReader
 from lsm.bloom_filter import BloomFilterReader
+from lsm.custom_types import SSTableEntry
 from lsm.utils import build_internal_key, extract_from_internal_key
 from settings import (
     INTERNAL_KEY_VALUE_TYPE_DELETE,

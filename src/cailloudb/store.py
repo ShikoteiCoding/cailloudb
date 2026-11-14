@@ -4,20 +4,19 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator
 
-from custom_types import SeqNum
 from lsm.lsmtree import LSMTree
 from settings import Settings
 
 if TYPE_CHECKING:
+    from lsm.engine_snapshot import EngineSnapshot
     from write_batch import WriteBatch
 
 
 class _BaseStore(ABC):
     @abstractmethod
-    async def get(self, key: bytes) -> bytes | None: ...
-
-    @abstractmethod
-    async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None: ...
+    async def get(
+        self, key: bytes, engine_snapshot: EngineSnapshot | None
+    ) -> bytes | None: ...
 
     @abstractmethod
     async def put(self, key: bytes, val: bytes) -> None: ...
@@ -30,22 +29,17 @@ class _BaseStore(ABC):
 
     @abstractmethod
     def scan(
-        self, start: bytes | None, end: bytes | None
+        self,
+        start: bytes | None,
+        end: bytes | None,
+        engine_snapshot: EngineSnapshot | None,
     ) -> AsyncIterator[tuple[bytes, bytes]]: ...
 
     @abstractmethod
-    def scan_at(
-        self, start: bytes | None, end: bytes | None, *, seq_num: int
-    ) -> AsyncIterator[tuple[bytes, bytes]]: ...
-
-    @abstractmethod
-    async def latest_sequence_number(self) -> int: ...
+    async def get_latest_sequence_number(self) -> int: ...
 
 
 class BaseStore(_BaseStore):
-    #: Sequence number for atomic write ops (put, del, merge)
-    _seq: SeqNum
-
     #: Runtime settings
     _settings: Settings
 
@@ -91,21 +85,15 @@ class BaseStore(_BaseStore):
             finally:
                 self._lock_file = None
 
-    async def get(self, key: bytes) -> bytes | None:
+    async def get(
+        self, key: bytes, engine_snapshot: EngineSnapshot | None = None
+    ) -> bytes | None:
         """
         Get a key.
 
         If the key is not found, return None.
         """
-        return self._tree.get(key, int(self._seq))
-
-    async def get_at(self, key: bytes, *, seq_num: int) -> bytes | None:
-        """
-        Positional Get key.
-
-        If the key is not found, return None.
-        """
-        return self._tree.get(key, seq_num)
+        return self._tree.get(key, engine_snapshot)
 
     async def put(self, key: bytes, value: bytes) -> None:
         """
@@ -115,9 +103,8 @@ class BaseStore(_BaseStore):
             raise ValueError("Type {} invalid for value.".format(type(value)))
         if not isinstance(key, bytes):
             raise KeyError("Type {} invalid for key.".format(type(key)))
-        seq_num = int(self._seq)
-        await self._tree.put(key, seq_num, value)
-        self._seq.increment()
+
+        await self._tree.put(key, value)
 
     async def delete(self, key: bytes) -> None:
         """
@@ -125,9 +112,8 @@ class BaseStore(_BaseStore):
 
         If the key doesn't exist, a deletion marker is created nonetheless.
         """
-        seq_num = int(self._seq)
-        await self._tree.delete(key, seq_num)
-        self._seq.increment()
+
+        await self._tree.delete(key)
 
     async def write(self, batch: WriteBatch) -> None:
         """
@@ -137,56 +123,46 @@ class BaseStore(_BaseStore):
         # - Single writer make this write essentially a blocking operation.
         # - Failure to apply this method should be retried during system recovery (crash).
         # - MVCC safeguards readers consistency during write runtime.
-        seq_num = int(self._seq)
-        applied = await self._tree.write(batch, seq_num)
-        for _ in range(applied):
-            self._seq.increment()
+        await self._tree.write(batch)
 
     async def scan(
         self,
         start: bytes | None = None,
         end: bytes | None = None,
+        engine_snapshot: EngineSnapshot | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         """
         Scan values between inclusive start and exclusive end.
         """
-        for key, value in self._tree.scan(start, end, int(self._seq)):
+        for key, value in self._tree.scan(start, end, engine_snapshot):
             yield key, value
 
-    async def scan_at(
-        self, start: bytes | None = None, end: bytes | None = None, *, seq_num: int
-    ) -> AsyncIterator[tuple[bytes, bytes]]:
-        """
-        Positional scan values between inclusive start and exclusive end.
-        """
-        for key, value in self._tree.scan(start, end, seq_num):
-            yield key, value
+    def create_snapshot(self) -> EngineSnapshot:
+        return self._tree.create_snapshot()
 
-    async def latest_sequence_number(self) -> int:
-        return int(self._seq)
+    def get_latest_sequence_number(self):
+        return self._tree.get_latest_sequence_number()
 
 
 class InMemoryStore(BaseStore):
-    def __init__(self, path: Path | str):
-        self._settings = Settings()
+    def __init__(self, path: Path | str, settings: Settings | None = None):
+        self._settings = settings or Settings()
         self._path = Path(path)
 
         self.init()
 
-        self._seq = SeqNum()
         self._tree = LSMTree(
             settings=self._settings, durable_sstable=False, path=self._path
         )
 
 
 class DurableStore(BaseStore):
-    def __init__(self, path: Path | str):
-        self._settings = Settings()
+    def __init__(self, path: Path | str, settings: Settings | None = None):
+        self._settings = settings or Settings()
         self._path = Path(path)
 
         self.init()
 
-        self._seq = SeqNum()
         self._tree = LSMTree(
             settings=self._settings, durable_sstable=True, path=self._path
         )

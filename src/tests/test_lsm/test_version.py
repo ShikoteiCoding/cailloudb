@@ -164,6 +164,7 @@ def test_versionset_init_with_existing_metadata_layout_opens_active_manifest(
                 "added_files": [],
                 "next_file_id": 4,
                 "log_number": 1,
+                "last_seq_num": 1,
             }
         ).encode("utf-8")
         + b"\n"
@@ -196,23 +197,26 @@ def test_versionset_recover_from_manifest_applies_deletes_and_next_file_id(
             "added_files": [],
             "next_file_id": 5,
             "log_number": 1,
+            "last_seq_num": 1,
         },
         {
             "deleted_files": [[0, 3]],
             "added_files": [],
             "next_file_id": 8,
             "log_number": 2,
+            "last_seq_num": 1,
         },
     ]
     manifest_path.write_bytes(
         b"".join(json.dumps(line).encode("utf-8") + b"\n" for line in manifest_lines)
     )
 
-    levels, _ = versions._recover_from_manifest(manifest_path, max_levels=2)
+    levels, _, seq_num = versions._recover_from_manifest(manifest_path, max_levels=2)
 
     assert levels == [[], []]
     assert 3 not in versions.get_sstable_map()
     assert versions._next_sstable_file_id == 8
+    assert seq_num == 1
 
 
 def test_versionset_recover_from_manifest_builds_durable_sstable_map_from_added_files(
@@ -312,12 +316,13 @@ def test_versionset_get_and_scan_functional_flow(tmp_path: Path):
     edit = VersionEdit(next_file_id=2, log_number=1)
     edit.add_file(1, _meta(1, b"k1", b"k3"))
     versions.log_and_apply(edit, [sst1])
+    version = versions.get_current_version()
 
-    assert versions.get(b"k1", seq_num=10) == b"v1"
-    assert versions.get(b"k2", seq_num=10) is None
-    assert versions.get(b"missing", seq_num=10) is None
+    assert versions.get(b"k1", seq_num=10, version=version) == b"v1"
+    assert versions.get(b"k2", seq_num=10, version=version) is None
+    assert versions.get(b"missing", seq_num=10, version=version) is None
 
-    scanned = list(versions.scan(b"k1", b"k4", seq_num=10))
+    scanned = list(versions.scan(b"k1", b"k4", seq_num=10, version=version))
     assert scanned == [
         {"key": b"k1", "seq_num": 0, "value": b"v1"},
         {"key": b"k2", "seq_num": 0, "value": TOMBSTONE},

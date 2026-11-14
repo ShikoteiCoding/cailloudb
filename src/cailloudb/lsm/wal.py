@@ -148,43 +148,6 @@ class Wal:
 
         self._file.flush()
 
-    def _physical_records(self, data: bytes) -> Iterator[tuple[int, bytes]]:
-        offset = 0
-        n = len(data)
-        while offset < n:
-            leftover = self._wal_block_size - (offset % self._wal_block_size)
-            # A short tail stops after the last good record, only one record is missed, acceptable
-            if leftover < WAL_HEADER_SIZE:
-                if offset + leftover < n:
-                    offset += leftover
-                    continue
-                return
-            if n - offset < WAL_HEADER_SIZE:
-                return
-            if data[offset : offset + WAL_HEADER_SIZE] == b"\x00" * WAL_HEADER_SIZE:
-                offset += leftover
-                continue
-
-            (checksum,) = STRUCT_WAL_CRC.unpack_from(data, offset)
-            (payload_len,) = STRUCT_WAL_PAYLOAD_LEN.unpack_from(data, offset + 4)
-            frame_end = offset + WAL_HEADER_SIZE + payload_len
-            # Part of this frame is past the end of the file, so this record is missed
-            if frame_end > n:
-                return
-            if WAL_HEADER_SIZE + payload_len > leftover:
-                raise ValueError("wal checksum mismatch")
-
-            kind = data[offset + 6]
-            payload = data[offset + WAL_HEADER_SIZE : frame_end]
-            offset = frame_end
-            # A checksum miss with bytes after it is corruption
-            if (zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF) != checksum:
-                # This frame is the end of the file, only one record is missed, acceptable
-                if offset == n:
-                    return
-                raise ValueError("wal checksum mismatch")
-            yield kind, payload
-
     # TODO : add TOMBSTONE here later
     def _single_ops(self, body: bytes) -> Iterator[tuple[bytes, int, bytes]]:
         (seq_num,) = STRUCT_WAL_SEQ.unpack_from(body, 0)
@@ -238,6 +201,43 @@ class Wal:
             raise ValueError(
                 "Unknown `kind` from WAL file, probably because the file is corrupted."
             )
+
+    def _physical_records(self, data: bytes) -> Iterator[tuple[int, bytes]]:
+        offset = 0
+        n = len(data)
+        while offset < n:
+            leftover = self._wal_block_size - (offset % self._wal_block_size)
+            # A short tail stops after the last good record, only one record is missed, acceptable
+            if leftover < WAL_HEADER_SIZE:
+                if offset + leftover < n:
+                    offset += leftover
+                    continue
+                return
+            if n - offset < WAL_HEADER_SIZE:
+                return
+            if data[offset : offset + WAL_HEADER_SIZE] == b"\x00" * WAL_HEADER_SIZE:
+                offset += leftover
+                continue
+
+            (checksum,) = STRUCT_WAL_CRC.unpack_from(data, offset)
+            (payload_len,) = STRUCT_WAL_PAYLOAD_LEN.unpack_from(data, offset + 4)
+            frame_end = offset + WAL_HEADER_SIZE + payload_len
+            # Part of this frame is past the end of the file, so this record is missed
+            if frame_end > n:
+                return
+            if WAL_HEADER_SIZE + payload_len > leftover:
+                raise ValueError("wal checksum mismatch")
+
+            kind = data[offset + 6]
+            payload = data[offset + WAL_HEADER_SIZE : frame_end]
+            offset = frame_end
+            # A checksum miss with bytes after it is corruption
+            if (zlib.crc32(bytes([kind]) + payload) & 0xFFFFFFFF) != checksum:
+                # This frame is the end of the file, only one record is missed, acceptable
+                if offset == n:
+                    return
+                raise ValueError("wal checksum mismatch")
+            yield kind, payload
 
     # TODO: replay these sequences into the store after a crash
     async def recover(self) -> AsyncIterator[tuple[bytes, int, bytes]]:

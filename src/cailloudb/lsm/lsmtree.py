@@ -3,11 +3,10 @@ import queue
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import TYPE_CHECKING, Callable, Iterator
 
-from custom_types import MemTableEntry, SSTableEntry
 from lsm.compactor import Compactor
-from lsm.custom_types import FileMetadata
+from lsm.custom_types import FileMetadata, MemTableEntry, SSTableEntry
 from lsm.filepicker import FilePicker
 from lsm.memtable import MemTable
 from lsm.sstable import SSTable
@@ -19,6 +18,9 @@ from settings import (
     Settings,
 )
 from write_batch import WriteBatch
+
+if TYPE_CHECKING:
+    from lsm.engine_snapshot import EngineSnapshot
 
 
 class LSMTree:
@@ -110,19 +112,24 @@ class LSMTree:
 
         if self._wal_enabled:
             recovery_log_number = self._versions.recovery_log_number
-
-            # NOTE: Convention - -1 means no existing log as it starts at 1.
+            # NOTE: Convention '-1' means no existing log as it starts at 1.
+            # No logs to recover, create a fresh MemTable
             if recovery_log_number == -1:
                 self._wal = Wal(self._path, 1)
                 self._memtable = MemTable(
-                    max_bytes_size=self._memtable_size, log_number=1
+                    max_bytes_size=self._memtable_size,
+                    log_number=1,
+                    last_seq_num=self._versions.get_latest_sequence_number(),
                 )
+            # Logs to recover on top of SSTables
             else:
                 self._memtable = MemTable(
-                    max_bytes_size=self._memtable_size, log_number=recovery_log_number
+                    max_bytes_size=self._memtable_size,
+                    log_number=recovery_log_number,
                 )
                 self._replay_logs_to_memtable(recovery_log_number)
                 self._wal = Wal(self._path, recovery_log_number)
+                self._versions.init_sequence_number(self._memtable.last_seq_num)
         else:
             self._wal = None
             self._memtable = MemTable(max_bytes_size=self._memtable_size)
@@ -145,40 +152,51 @@ class LSMTree:
         for key, seq_num, value in wal_reader.records():
             self._insert(key, seq_num, value)
 
-    async def put(self, key: bytes, seq_num: int, value: bytes) -> None:
+    async def put(self, key: bytes, value: bytes) -> None:
         """
         Put a key-value pair into the currently active memtable.
         """
+        seq_num = self._versions.get_latest_sequence_number()
         if self._wal is not None and self._wal_enabled:
             self._wal.append(key, seq_num, value)
         self._insert(key, seq_num, value)
+        self._versions.increment_sequence_number()
 
-    async def delete(self, key: bytes, seq_num: int) -> None:
+    async def delete(self, key: bytes) -> None:
         """
         Syntactic sugar to put a tombstone marker.
         """
+        seq_num = self._versions.get_latest_sequence_number()
         if self._wal is not None and self._wal_enabled:
             self._wal.append(key, seq_num, b"")
         self._insert(key, seq_num, TOMBSTONE)
+        self._versions.increment_sequence_number()
 
-    async def write(self, batch: WriteBatch, seq_num: int) -> int:
+    async def write(self, batch: WriteBatch) -> None:
         """
         Apply each operation in the batch, starting at `seq_num`.
 
         Returns how many operations were applied.
         """
+        seq_num = self._versions.get_latest_sequence_number()
         batch.sync_header(seq_num)
         if self._wal is not None and self._wal_enabled:
             self._wal.append(batch, seq_num)
-        applied = 0
         for key, value in batch:
             self._insert(key, seq_num, value)
-            seq_num += 1
-            applied += 1
+            self._versions.increment_sequence_number()
         self._maybe_rotate_memtable()
-        return applied
 
-    def get(self, key: bytes, seq_num: int) -> bytes | None:
+    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
+        """
+        Apply one operation to the active memtable.
+        """
+        self._memtable.insert(key, seq_num, value)
+        self._maybe_rotate_memtable()
+
+    def get(
+        self, key: bytes, engine_snapshot: EngineSnapshot | None = None
+    ) -> bytes | None:
         """
         Point-in-time reads.
 
@@ -188,6 +206,16 @@ class LSMTree:
         # Assumptions
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check
+        seq_num = (
+            self._versions.get_latest_sequence_number()
+            if engine_snapshot is None
+            else engine_snapshot.get_pinned_sequence_number()
+        )
+        version = (
+            self._versions.get_current_version()
+            if engine_snapshot is None
+            else engine_snapshot.get_pinned_version()
+        )
 
         # Check active memtable first
         entry = self._memtable.get(key, seq_num)
@@ -202,10 +230,13 @@ class LSMTree:
             if entry:
                 return None if entry["value"] == TOMBSTONE else entry["value"]
 
-        return self._versions.get(key, seq_num)
+        return self._versions.get(key, seq_num, version=version)
 
     def scan(
-        self, start_key: bytes | None, end_key: bytes | None, seq_num: int
+        self,
+        start_key: bytes | None,
+        end_key: bytes | None,
+        engine_snapshot: EngineSnapshot | None = None,
     ) -> Iterator[tuple[bytes, bytes]]:
         """
         Ranged point-in-time reads.
@@ -216,6 +247,16 @@ class LSMTree:
         # Assumptions
         # - The write path is blocking during put with a synchronous flush-on-full action,
         #   there is never any immutable memtables to check.
+        seq_num = (
+            self._versions.get_latest_sequence_number()
+            if engine_snapshot is None
+            else engine_snapshot.get_pinned_sequence_number()
+        )
+        version = (
+            self._versions.get_current_version()
+            if engine_snapshot is None
+            else engine_snapshot.get_pinned_version()
+        )
 
         # Get all iterators
         iterators = []
@@ -225,7 +266,9 @@ class LSMTree:
         for imm in self._immutable_memtables:
             iterators.append(imm.scan(start_key, end_key, seq_num))
 
-        iterators.append(self._versions.scan(start_key, end_key, seq_num))
+        iterators.append(
+            self._versions.scan(start_key, end_key, seq_num, version=version)
+        )
 
         # Aggregator function for whichever iterator
         def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
@@ -256,13 +299,6 @@ class LSMTree:
 
             last_processed_key = key
 
-    def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
-        """
-        Apply one operation to the active memtable.
-        """
-        self._memtable.insert(key, seq_num, value)
-        self._maybe_rotate_memtable()
-
     def _maybe_rotate_memtable(self) -> None:
         """
         Flush full memtable(s) to SSTable, create a new active memtable and open the next WAL
@@ -283,6 +319,9 @@ class LSMTree:
         """
         Start a flush task in a worker if not already running.
         """
+        if not self._flush_enabled:
+            return
+
         if self._flush_thread is None:
             self._flush_thread = self._make_background_thread(self._flush_worker)
             self._flush_thread.start()
@@ -321,6 +360,8 @@ class LSMTree:
 
                 if self._wal and self._wal_enabled:
                     edit.log_number = self._wal.log_number
+
+                edit.last_seq_num = memtable.last_seq_num
 
                 # commit to disk then remove persisted memtable
                 with self._mem_lock:
@@ -444,3 +485,9 @@ class LSMTree:
         while True:
             time.sleep(self._compaction_interval_s)
             self._commit_compaction_result(self._pick_and_compact())
+
+    def create_snapshot(self) -> EngineSnapshot:
+        return self._versions.create_snapshot()
+
+    def get_latest_sequence_number(self) -> int:
+        return self._versions.get_latest_sequence_number()

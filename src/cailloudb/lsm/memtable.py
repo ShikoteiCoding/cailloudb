@@ -1,6 +1,6 @@
 from typing import Iterator
 
-from custom_types import MemTableEntry
+from lsm.custom_types import MemTableEntry
 from lsm.skiplist import SkipList
 
 
@@ -20,16 +20,23 @@ class MemTable(Iterator):
     #: Log number reference if wal is enabled
     log_number: int | None
 
-    def __init__(self, max_bytes_size: int, log_number: int | None = None):
+    #: Max seq num for recovery
+    last_seq_num: int
+
+    def __init__(
+        self, max_bytes_size: int, log_number: int | None = None, last_seq_num: int = 0
+    ):
         self._skiplist = SkipList()
         self._max_bytes_size = max_bytes_size
         self.log_number = log_number
+        self.last_seq_num = last_seq_num
 
     def insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
         Append-only a new (key, value) pair.
         """
         self._skiplist.insert(key, seq_num, value)
+        self.last_seq_num = max(seq_num, self.last_seq_num)
 
     def get(self, key: bytes, seq_num: int) -> MemTableEntry | None:
         """

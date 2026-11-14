@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.custom_types import SSTableEntry
+from cailloudb.lsm.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
     DurableSSTable,

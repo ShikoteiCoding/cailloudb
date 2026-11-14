@@ -20,6 +20,3 @@ class DbReader:
         end: bytes | None = None,
     ) -> AsyncIterator[tuple[bytes, bytes]]:
         return self._store.scan(start, end)
-
-    async def latest_sequence_number(self) -> int:
-        return await self._store.latest_sequence_number()

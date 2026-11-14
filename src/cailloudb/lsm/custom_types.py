@@ -17,3 +17,31 @@ class FileMetadata(TypedDict):
     smallest_key: bytes
     largest_key: bytes
     file_size: int
+
+
+class MemTableEntry(TypedDict):
+    key: bytes
+    seq_num: int
+    value: bytes
+
+
+class SSTableEntry(TypedDict):
+    key: bytes
+    seq_num: int
+    value: bytes
+
+
+class SeqNum:
+    """Monotonically increasing sequencer generator."""
+
+    #: Last sequence number
+    _value: int
+
+    def __init__(self, value: int = 0):
+        self._value = value
+
+    def increment(self):
+        self._value += 1
+
+    def __int__(self) -> int:
+        return self._value
