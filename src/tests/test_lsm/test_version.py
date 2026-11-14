@@ -301,15 +301,15 @@ def test_versionset_write_to_manifest_raises_when_handle_missing(tmp_path: Path)
         versions._write_to_manifest(VersionEdit())
 
 
-def test_versionset_get_and_scan_functional_flow(tmp_path: Path):
+def test_versionset_get_and_scan(tmp_path: Path):
     versions = VersionSet(tmp_path, max_levels=3)
 
     sst1 = FakeSSTable(
         1,
         [
             {"key": b"k1", "seq_num": 0, "value": b"v1"},
-            {"key": b"k2", "seq_num": 0, "value": TOMBSTONE},
-            {"key": b"k3", "seq_num": 0, "value": b"v3"},
+            {"key": b"k2", "seq_num": 1, "value": TOMBSTONE},
+            {"key": b"k3", "seq_num": 2, "value": b"v3"},
         ],
     )
 
@@ -322,9 +322,74 @@ def test_versionset_get_and_scan_functional_flow(tmp_path: Path):
     assert versions.get(b"k2", seq_num=10, version=version) is None
     assert versions.get(b"missing", seq_num=10, version=version) is None
 
+    # scan bounded
     scanned = list(versions.scan(b"k1", b"k4", seq_num=10, version=version))
     assert scanned == [
         {"key": b"k1", "seq_num": 0, "value": b"v1"},
-        {"key": b"k2", "seq_num": 0, "value": TOMBSTONE},
-        {"key": b"k3", "seq_num": 0, "value": b"v3"},
+        {"key": b"k2", "seq_num": 1, "value": TOMBSTONE},
+        {"key": b"k3", "seq_num": 2, "value": b"v3"},
+    ]
+
+    # scan start unbounded
+    scanned = list(versions.scan(None, b"k4", seq_num=10, version=version))
+    assert scanned == [
+        {"key": b"k1", "seq_num": 0, "value": b"v1"},
+        {"key": b"k2", "seq_num": 1, "value": TOMBSTONE},
+        {"key": b"k3", "seq_num": 2, "value": b"v3"},
+    ]
+
+    # scan end unbounded
+    scanned = list(versions.scan(b"k1", None, seq_num=10, version=version))
+    assert scanned == [
+        {"key": b"k1", "seq_num": 0, "value": b"v1"},
+        {"key": b"k2", "seq_num": 1, "value": TOMBSTONE},
+        {"key": b"k3", "seq_num": 2, "value": b"v3"},
+    ]
+
+
+def test_versionset_scan_on_multiple(tmp_path: Path):
+    versions = VersionSet(tmp_path, max_levels=3)
+
+    sst1 = FakeSSTable(
+        1,
+        [
+            {"key": b"k1", "seq_num": 0, "value": b"v1"},
+        ],
+    )
+
+    sst2 = FakeSSTable(
+        2,
+        [
+            {"key": b"k2", "seq_num": 1, "value": b"v2"},
+        ],
+    )
+
+    sst3 = FakeSSTable(
+        3,
+        [
+            {"key": b"k3", "seq_num": 2, "value": b"v3"},
+        ],
+    )
+
+    edit1 = VersionEdit(next_file_id=2, log_number=1)
+    edit1.add_file(0, _meta(1, b"k1", b"k1"))
+    versions.log_and_apply(edit1, [sst1])
+
+    edit2 = VersionEdit(next_file_id=3, log_number=2)
+    edit2.add_file(0, _meta(2, b"k2", b"k2"))
+    versions.log_and_apply(edit2, [sst2])
+
+    edit3 = VersionEdit(next_file_id=4, log_number=3)
+    edit3.add_file(0, _meta(3, b"k3", b"k3"))
+    versions.log_and_apply(edit3, [sst3])
+
+    version = versions.get_current_version()
+
+    scanned = list(versions.scan(b"k2", b"k3", seq_num=10, version=version))
+    assert scanned == [
+        {"key": b"k2", "seq_num": 1, "value": b"v2"},
+    ]
+
+    assert list(versions.scan(None, b"k2", seq_num=10, version=version)) == [
+        {"key": b"k1", "seq_num": 0, "value": b"v1"},
     ]

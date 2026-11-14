@@ -475,6 +475,22 @@ async def test_lsmtree_get_from_sstable_or_skiplist(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_lsmtree_get_includes_immutable_memtables(tmp_path: Path):
+    lsmtree = LSMTree(
+        _isolated_settings(flush_enabled=False, memtable_max_bytes_size=20),
+        False,
+        tmp_path,
+    )
+    await lsmtree.put(b"key1", b"val1")
+    await lsmtree.put(b"key2", b"val2")
+
+    result = lsmtree.get(b"key1")
+
+    assert len(lsmtree._immutable_memtables) == 1
+    assert result == b"val1"
+
+
+@pytest.mark.asyncio
 async def test_lsm_delete_from_sstables_or_skiplist(tmp_path: Path):
     settings = _isolated_settings(
         memtable_max_bytes_size=30
