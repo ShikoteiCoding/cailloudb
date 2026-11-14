@@ -10,7 +10,6 @@ __all__ = [
     "test_dbreader_get",
     "test_dbreader_scan",
     "test_dbreader_sees_db_writes",
-    "test_dbreader_latest_sequence_number",
     "test_db_reader_shares_store",
     "test_dbreader_recovers_flushed_sstable_on_reopen",
     "test_dbreader_scan_recovers_flushed_sstable_on_reopen",

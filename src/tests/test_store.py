@@ -20,11 +20,9 @@ __all__ = [
     "test_store_close_swallows_errors_if_lock_handle_already_closed",
     "test_store_second_instantiation_raises_and_allows_clean_close",
     "test_store_get_never_raises",
-    "test_store_get_at_never_raises",
     "test_store_delete_never_raises",
     "test_store_write_batch",
     "test_store_scan",
-    "test_store_scan_at",
     "test_put_rejects_none_value",
     "test_put_rejects_non_bytes_key",
 ]

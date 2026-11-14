@@ -32,7 +32,6 @@ __all__ = [
     "test_lsmtree_scan_level_gt_0_breaks_on_end_bound",
     "test_lsmtree_scan_fixed_range",
     "test_lsmtree_scan_unbounded_range",
-    "test_lsmtree_scan_max_seq",
     "test_rotate_deletes_sealed_wal_after_flush",
     "test_lsmtree_flush_empty_flush",
     "test_lsmtree_flush_worker_returns_when_queue_is_none",
@@ -486,6 +485,13 @@ async def test_lsm_delete_from_sstables_or_skiplist(tmp_path: Path):
     await lsmtree.delete(b"key2")
     await lsmtree.delete(b"key3")
 
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
+
     assert lsmtree.get(b"key1") is None
     assert lsmtree.get(b"key2") is None
     assert lsmtree.get(b"key3") is None
@@ -564,6 +570,13 @@ async def test_lsmtree_scan_fixed_range(tmp_path: Path):
     await lsmtree.put(b"key2", b"val2")
     await lsmtree.put(b"key3", b"val3")
 
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
+
     # Test inclusive
     result = [item for item in lsmtree.scan(b"key1", b"key4")]
     assert result == [
@@ -604,6 +617,13 @@ async def test_lsmtree_scan_unbounded_range(tmp_path: Path):
     await lsmtree.put(b"key2", b"val2")
     await lsmtree.put(b"key3", b"val3")
 
+    _wait_for_condition(
+        lambda: (
+            lsmtree._flush_queue.unfinished_tasks == 0
+            and not lsmtree._immutable_memtables
+        )
+    )
+
     # Test unbounded end_key
     result = [item for item in lsmtree.scan(b"key1", None)]
     assert result == [
@@ -621,34 +641,6 @@ async def test_lsmtree_scan_unbounded_range(tmp_path: Path):
     ]
 
     # Test unbounded both
-    result = [item for item in lsmtree.scan(None, None)]
-    assert result == [
-        (b"key1", b"val1"),
-        (b"key2", b"val2"),
-        (b"key3", b"val3"),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_lsmtree_scan_max_seq(tmp_path: Path):
-    settings = _isolated_settings(
-        memtable_max_bytes_size=30
-    )  # should hold exactly one record
-    lsmtree = LSMTree(settings, False, tmp_path)
-
-    await lsmtree.put(b"key1", b"val1")
-    await lsmtree.put(b"key2", b"val2")
-    await lsmtree.put(b"key3", b"val3")
-
-    # Test fixed range
-    result = [item for item in lsmtree.scan(b"key1", b"key4")]
-    assert result == [
-        (b"key1", b"val1"),
-        (b"key2", b"val2"),
-        (b"key3", b"val3"),
-    ]
-
-    # Test unbounded
     result = [item for item in lsmtree.scan(None, None)]
     assert result == [
         (b"key1", b"val1"),

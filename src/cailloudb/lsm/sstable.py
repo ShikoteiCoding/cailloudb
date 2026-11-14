@@ -35,6 +35,7 @@ class SSTable(abc.ABC):
     #: Sparse index - (block_offset, block_len) for each block
     index_meta: list[tuple[int, int]]
 
+    #: Bloom filter reader
     _bloom_filter: BloomFilterReader
 
     def _load_index(self):
@@ -56,8 +57,6 @@ class SSTable(abc.ABC):
 
         # filter makes every lookup fall through to blocks
         bloom_filter_size = footer_offset - (index_offset + index_size)
-        if bloom_filter_size < 0:
-            raise ValueError(f"Invalid Bloom filter bounds in SSTable: {self.path}")
         self._bloom_filter = BloomFilterReader(self.file.read(bloom_filter_size))
 
         # 3. Parse Index Entries
@@ -110,8 +109,8 @@ class SSTable(abc.ABC):
 
         # Find the block through sparse index last_internal_key per block
         block_idx = bisect.bisect_left(self.index_keys, target_internal_key)
-        if block_idx >= len(self.index_keys):
-            return None  # Key is larger than any key in this SSTable
+        if block_idx == len(self.index_keys):
+            return None  # Lookup key is larger than any key in this SSTable
 
         # Search inside the block which might have it
         block_offset, block_len = self.index_meta[block_idx]

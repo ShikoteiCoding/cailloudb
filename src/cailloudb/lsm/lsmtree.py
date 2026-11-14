@@ -270,13 +270,11 @@ class LSMTree:
             self._versions.scan(start_key, end_key, seq_num, version=version)
         )
 
-        # Aggregator function for whichever iterator
+        # Iterators from memtable and sstables are already strictly
+        # excluding end_key and recent seq_num, the iterator is just
+        # reversing the seq_num for descending ordering guarantees
         def iterator_agg(iterator: Iterator[MemTableEntry | SSTableEntry]):
             for entry in iterator:
-                if end_key is not None and entry["key"] >= end_key:
-                    break  # Stop streaming from this component if we pass end_key
-
-                # Trick, reverse the seq num to ensure last wins
                 yield (entry["key"], -entry["seq_num"], entry["value"])
 
         # K-way merge
@@ -284,12 +282,7 @@ class LSMTree:
 
         last_processed_key = None
 
-        for key, neg_seq, value in merged_entries:
-            entry_seq = -neg_seq
-
-            if entry_seq > seq_num:
-                continue  # Skip newer versions
-
+        for key, _, value in merged_entries:
             if key == last_processed_key:
                 continue  # Skip key duplicates
 
