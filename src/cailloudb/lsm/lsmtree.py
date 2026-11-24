@@ -1,6 +1,7 @@
 import heapq
 import queue
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
@@ -27,7 +28,7 @@ class LSMTree:
     LSM Tree used in cailloudb.store. It is effectively a coordination layer between
     the memtables and sstables.
 
-    Core assumption is single writer. So it is kept free of lock logic.
+    The write path assumes a single writer.
     """
 
     #: Runtime settings
@@ -95,6 +96,8 @@ class LSMTree:
 
         self._mem_lock = threading.Lock()
         self._stop = threading.Event()
+        self._write_in_progress = False
+        self._write_finished = threading.Event()
         self._flush_failed = False
 
         self.init()
@@ -157,8 +160,7 @@ class LSMTree:
         """
         Put a key-value pair into the currently active memtable.
         """
-        with self._mem_lock:
-            seq_num = self._write_sequence_number()
+        with self._write_operation() as seq_num:
             if self._wal is not None and self._wal_enabled:
                 self._wal.append(key, seq_num, value)
             self._insert(key, seq_num, value)
@@ -168,8 +170,7 @@ class LSMTree:
         """
         Syntactic sugar to put a tombstone marker.
         """
-        with self._mem_lock:
-            seq_num = self._write_sequence_number()
+        with self._write_operation() as seq_num:
             if self._wal is not None and self._wal_enabled:
                 self._wal.append(key, seq_num, b"")
             self._insert(key, seq_num, TOMBSTONE)
@@ -181,8 +182,7 @@ class LSMTree:
 
         Returns how many operations were applied.
         """
-        with self._mem_lock:
-            seq_num = self._write_sequence_number()
+        with self._write_operation() as seq_num:
             batch.sync_header(seq_num)
             if self._wal is not None and self._wal_enabled:
                 self._wal.append(batch, seq_num)
@@ -191,12 +191,22 @@ class LSMTree:
                 self._versions.increment_sequence_number()
             self._maybe_rotate_memtable()
 
-    def _write_sequence_number(self) -> int:
+    @contextmanager
+    def _write_operation(self) -> Iterator[int]:
         if self._stop.is_set():
             raise RuntimeError("Database is closed")
-        if self._flush_failed:
-            raise RuntimeError("Memtable flush failed. Reopen before writing.")
-        return self.get_latest_sequence_number()
+        # Register the write before checking again so close can wait for it
+        self._write_in_progress = True
+        try:
+            if self._stop.is_set():
+                raise RuntimeError("Database is closed")
+            if self._flush_failed:
+                raise RuntimeError("Memtable flush failed. Reopen before writing.")
+            yield self.get_latest_sequence_number()
+        finally:
+            self._write_in_progress = False
+            if self._stop.is_set():
+                self._write_finished.set()
 
     def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -310,14 +320,15 @@ class LSMTree:
         The new log is born before flush so later writes cannot land in sealed file
         """
         if self._memtable.is_full():
-            self._immutable_memtables.append(self._memtable)
-            self._flush_queue.put(self._memtable)
+            sealed = self._memtable
             log_number = None
             if self._wal_enabled and self._wal:
                 log_number = self._wal.roll()
+            self._immutable_memtables.append(sealed)
             self._memtable = MemTable(
                 max_bytes_size=self._memtable_size, log_number=log_number
             )
+            self._flush_queue.put(sealed)
 
     def _start_flush_worker(self) -> None:
         """
@@ -502,12 +513,13 @@ class LSMTree:
         with self._mem_lock:
             if not self._stop.is_set():
                 self._stop.set()
+                if self._write_in_progress:
+                    self._write_finished.wait()
                 if self._flush_thread is not None:
                     self._flush_queue.put(None)
-        if self._flush_thread is not None:
-            self._flush_thread.join()
-        if self._compaction_thread is not None:
-            self._compaction_thread.join()
+        for worker in (self._flush_thread, self._compaction_thread):
+            if worker is not None:
+                worker.join()
         if self._wal is not None:
             self._wal.close()
         self._versions.close()
