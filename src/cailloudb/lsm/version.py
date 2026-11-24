@@ -5,10 +5,8 @@ import threading
 from pathlib import Path
 from typing import Iterator
 
-from custom_types import SSTableEntry
-from lsm.custom_types import (
-    FileMetadata,
-)
+from lsm.custom_types import FileMetadata, SeqNum, SSTableEntry
+from lsm.engine_snapshot import EngineSnapshot
 from lsm.sstable import DurableSSTable, SSTable
 from lsm.utils import (
     decode_file_metadata,
@@ -34,6 +32,7 @@ class VersionEdit:
     #: Metadata
     next_file_id: int
     log_number: int
+    last_seq_num: int
 
     def __init__(
         self,
@@ -41,11 +40,13 @@ class VersionEdit:
         added_files: list[tuple[int, FileMetadata]] | None = None,
         next_file_id: int = -1,
         log_number: int = -1,
+        last_seq_num: int = -1,  # TODO: add to encode / decode
     ):
         self.deleted_files = deleted_files if deleted_files is not None else []
         self.added_files = added_files if added_files is not None else []
         self.next_file_id = next_file_id
         self.log_number = log_number
+        self.last_seq_num = last_seq_num
 
     def add_file(self, level: int, file_meta: FileMetadata) -> None:
         self.added_files.append((level, file_meta))
@@ -70,6 +71,7 @@ class VersionEdit:
             ],
             "next_file_id": self.next_file_id,
             "log_number": self.log_number,
+            "last_seq_num": self.last_seq_num,
         }
         return json.dumps(data).encode("utf-8") + b"\n"
 
@@ -87,6 +89,7 @@ class VersionEdit:
             ],
             next_file_id=int(data["next_file_id"]),
             log_number=int(data["log_number"]),
+            last_seq_num=int(data["last_seq_num"]),
         )
 
 
@@ -136,6 +139,9 @@ class Version:
     def get_levels(self) -> list[list[FileMetadata]]:
         return self._levels
 
+    def copy(self) -> Version:
+        return Version([level.copy() for level in self._levels])
+
 
 class VersionSet:
     """
@@ -171,6 +177,9 @@ class VersionSet:
     # no available log to recover during restart
     recovery_log_number: int
 
+    #: Sequence number for atomic write ops (put, del, merge)
+    _seq_num: SeqNum
+
     def __init__(self, path: Path, max_levels: int):
         self._path = path
         self._version_lock = threading.Lock()
@@ -185,28 +194,31 @@ class VersionSet:
     def init(self, max_levels: int) -> None:
         current_path = self._path / "CURRENT"
 
+        # Manifest exists, recover state
         if current_path.exists():
             manifest_file_name = self._extract_current_manifest_file_name()
             self._next_manifest_file_id = self._parse_manifest_file_name(
                 manifest_file_name
             )
             manifest_path = self._path / manifest_file_name
-            levels, recovery_log_number = self._recover_from_manifest(
+            levels, recovery_log_number, max_seq_num = self._recover_from_manifest(
                 manifest_path, max_levels
             )
 
             # If no sstable, need to discover log files instead of manifest
-            self.recovery_log_number = (
-                self._recover_log_number(self._path)
-                if recovery_log_number == -1
-                else recovery_log_number
-            )
-
+            # Metadata in logs take precedence for some: last seq num etc ...
+            if recovery_log_number == -1:
+                self.recovery_log_number = self._recover_log_number(self._path)
+                self._seq_num = SeqNum()
+            else:
+                self.recovery_log_number = recovery_log_number
+                self._seq_num = SeqNum(max_seq_num)
         else:
             self._next_manifest_file_id = 1
             manifest_path = self._create_initial_manifest()
             self.recovery_log_number = -1
             levels = [[] for _ in range(max_levels)]
+            self._seq_num = SeqNum()
 
         self._manifest_file = open(manifest_path, "ab")
         self._current_version = Version(levels)
@@ -226,6 +238,16 @@ class VersionSet:
                 log_number = max(log_number, int(digits))
 
         return log_number
+
+    def init_sequence_number(self, val: int) -> None:
+        """
+        Initialize global sequence number during recovery startup after replaying WAL.
+        """
+        with self._version_lock:
+            assert val >= 0, "SeqNum expected to be greater or equal to 0."
+
+            if val > int(self._seq_num):
+                self._seq_num = SeqNum(val)
 
     def file_id_generator(self) -> int:
         """
@@ -249,7 +271,7 @@ class VersionSet:
 
     def _recover_from_manifest(
         self, manifest_path: Path, max_levels: int
-    ) -> tuple[list[list[FileMetadata]], int]:
+    ) -> tuple[list[list[FileMetadata]], int, int]:
         """
         Replay all VersionEdit(s) in-order and rebuild state from manifest.
 
@@ -257,6 +279,7 @@ class VersionSet:
         """
         levels = [[] for _ in range(max_levels)]
         recovery_log_number = -1
+        max_seq_num = 0
 
         with manifest_path.open("rb") as f:
             for line in f:
@@ -267,8 +290,9 @@ class VersionSet:
                 self._next_sstable_file_id = max(
                     self._next_sstable_file_id, edit.next_file_id
                 )
+                max_seq_num = max(edit.last_seq_num, max_seq_num)
 
-        return levels, recovery_log_number
+        return levels, recovery_log_number, max_seq_num
 
     def _apply_edit_to_state(self, edit: VersionEdit, levels: list[list[FileMetadata]]):
         """
@@ -355,8 +379,7 @@ class VersionSet:
         self._next_sstable_file_id = max(self._next_sstable_file_id, edit.next_file_id)
         return updated_levels
 
-    def get(self, key: bytes, seq_num: int) -> bytes | None:
-        version = self._current_version
+    def get(self, key: bytes, seq_num: int, version: Version) -> bytes | None:
         candidate_files = version.find_files_containing(key)
 
         for file_meta in candidate_files:
@@ -371,9 +394,13 @@ class VersionSet:
         return None
 
     def scan(
-        self, start_key: bytes | None, end_key: bytes | None, seq_num: int
+        self,
+        start_key: bytes | None,
+        end_key: bytes | None,
+        seq_num: int,
+        version: Version,
     ) -> Iterator[SSTableEntry]:
-        levels = self._current_version.get_levels()
+        levels = version.get_levels()
 
         for level_idx, level_files in enumerate(levels):
             for meta in level_files:
@@ -396,8 +423,22 @@ class VersionSet:
                 for entry in sst.scan(start_key, end_key, seq_num):
                     yield entry
 
+    def create_snapshot(self) -> EngineSnapshot:
+        with self._version_lock:
+            return EngineSnapshot(
+                # seq num generator is a forward, exclude the "next" bounded entry
+                int(self._seq_num) - 1,
+                self._current_version.copy(),
+            )
+
     def get_current_version(self) -> Version:
         return self._current_version
 
     def get_sstable_map(self) -> dict[int, SSTable]:
         return self._sstables_map
+
+    def get_latest_sequence_number(self) -> int:
+        return int(self._seq_num)
+
+    def increment_sequence_number(self):
+        self._seq_num.increment()

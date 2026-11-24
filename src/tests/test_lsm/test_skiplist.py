@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cailloudb.custom_types import MemTableEntry
+from cailloudb.lsm.custom_types import MemTableEntry
 from cailloudb.lsm.skiplist import SkipList
 
 __all__ = [

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cailloudb.custom_types import SSTableEntry
+from cailloudb.lsm.custom_types import SSTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.lsm.sstable import (
     DurableSSTable,
@@ -66,6 +66,16 @@ def test_sstable_inmemory_get(memtable: MemTable):
     assert sstable.get(b"cherry", 3) == SSTableEntry(
         key=b"cherry", seq_num=3, value=TOMBSTONE
     )
+
+    # Force crc collision where bloom filter may find the key
+    # Bisect should reject this out-of-bound key (z)
+    for i in range(4, 10000):
+        assert sstable.get(("z" + str(i)).encode(), i) is None
+
+    # Force crc collision where bloom filter may find the key
+    # Bisect should find this key in range, block will not find it
+    for i in range(4, 10000):
+        assert sstable.get(("a" + str(i)).encode(), i) is None
 
 
 def test_sstable_inmemory_get_missing_key_in_range(memtable: MemTable):

@@ -1,4 +1,4 @@
-from cailloudb.custom_types import MemTableEntry
+from cailloudb.lsm.custom_types import MemTableEntry
 from cailloudb.lsm.memtable import MemTable
 from cailloudb.settings import INTERNAL_KEY_LEN_METADATA, TOMBSTONE, Settings
 

@@ -20,11 +20,9 @@ __all__ = [
     "test_store_close_swallows_errors_if_lock_handle_already_closed",
     "test_store_second_instantiation_raises_and_allows_clean_close",
     "test_store_get_never_raises",
-    "test_store_get_at_never_raises",
     "test_store_delete_never_raises",
     "test_store_write_batch",
     "test_store_scan",
-    "test_store_scan_at",
     "test_put_rejects_none_value",
     "test_put_rejects_non_bytes_key",
 ]
@@ -106,26 +104,24 @@ async def test_store_get_never_raises(tmp_path: Path, store_cls: StoreClass):
     assert await store.get(b"test2") == b"val2"
     assert await store.get(b"test3") is None
 
-    assert await store.latest_sequence_number() == 2
 
+# @pytest.mark.asyncio
+# @pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+# async def test_store_get_at_never_raises(tmp_path: Path, store_cls: StoreClass):
+#     store = _make_store(store_cls, tmp_path)
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
-async def test_store_get_at_never_raises(tmp_path: Path, store_cls: StoreClass):
-    store = _make_store(store_cls, tmp_path)
+#     await store.put(b"test1", b"val1")
+#     assert await store.get_at(b"test1", seq_num=0) == b"val1"
 
-    await store.put(b"test1", b"val1")
-    assert await store.get_at(b"test1", seq_num=0) == b"val1"
+#     await store.put(b"test2", b"val2")
+#     assert await store.get_at(b"test2", seq_num=1) == b"val2"
+#     assert await store.get_at(b"test3", seq_num=1) is None
 
-    await store.put(b"test2", b"val2")
-    assert await store.get_at(b"test2", seq_num=1) == b"val2"
-    assert await store.get_at(b"test3", seq_num=1) is None
+#     assert await store.latest_sequence_number() == 2
 
-    assert await store.latest_sequence_number() == 2
-
-    assert await store.get_at(b"test2", seq_num=0) is None
-    assert await store.get_at(b"test2", seq_num=1) == b"val2"
-    assert await store.get_at(b"test3", seq_num=0) is None
+#     assert await store.get_at(b"test2", seq_num=0) is None
+#     assert await store.get_at(b"test2", seq_num=1) == b"val2"
+#     assert await store.get_at(b"test3", seq_num=0) is None
 
 
 @pytest.mark.asyncio
@@ -141,8 +137,6 @@ async def test_store_delete_never_raises(tmp_path: Path, store_cls: StoreClass):
 
     await store.delete(b"test1")
     assert await store.get(b"test1") is None
-
-    assert await store.latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
@@ -164,8 +158,6 @@ async def test_store_write_batch(tmp_path: Path, store_cls: StoreClass):
     assert await store.get(b"test3") == b"val3"
 
     assert await store.get(b"test2") is None
-
-    assert await store.latest_sequence_number() == 4
 
 
 @pytest.mark.asyncio
@@ -192,28 +184,28 @@ async def test_store_scan(tmp_path: Path, store_cls: StoreClass):
     assert items == [(b"a", b"1"), (b"c", b"3")]
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
-async def test_store_scan_at(tmp_path: Path, store_cls: StoreClass):
-    store = _make_store(store_cls, tmp_path)
+# @pytest.mark.asyncio
+# @pytest.mark.parametrize("store_cls", STORE_CLASSES, ids=lambda cls: cls.__name__)
+# async def test_store_scan_at(tmp_path: Path, store_cls: StoreClass):
+#     store = _make_store(store_cls, tmp_path)
 
-    await store.put(b"b", b"2")
-    await store.put(b"a", b"1")
-    await store.put(b"c", b"3")
+#     await store.put(b"b", b"2")
+#     await store.put(b"a", b"1")
+#     await store.put(b"c", b"3")
 
-    items = [item async for item in store.scan_at(seq_num=2)]
-    assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
+#     items = [item async for item in store.scan_at(seq_num=2)]
+#     assert items == [(b"a", b"1"), (b"b", b"2"), (b"c", b"3")]
 
-    items = [item async for item in store.scan_at(b"b", seq_num=2)]
-    assert items == [(b"b", b"2"), (b"c", b"3")]
+#     items = [item async for item in store.scan_at(b"b", seq_num=2)]
+#     assert items == [(b"b", b"2"), (b"c", b"3")]
 
-    items = [item async for item in store.scan_at(b"b", b"c", seq_num=2)]
-    assert items == [(b"b", b"2")]
+#     items = [item async for item in store.scan_at(b"b", b"c", seq_num=2)]
+#     assert items == [(b"b", b"2")]
 
-    await store.delete(b"b")
+#     await store.delete(b"b")
 
-    items = [item async for item in store.scan_at(seq_num=3)]
-    assert items == [(b"a", b"1"), (b"c", b"3")]
+#     items = [item async for item in store.scan_at(seq_num=3)]
+#     assert items == [(b"a", b"1"), (b"c", b"3")]
 
 
 @pytest.mark.asyncio
@@ -224,7 +216,6 @@ async def test_put_rejects_none_value(tmp_path: Path, store_cls: StoreClass):
     with pytest.raises(ValueError):
         await store.put(b"a", None)  # type: ignore
 
-    assert await store.latest_sequence_number() == 0
     records = [record async for record in store._tree._wal.recover()]  # type: ignore
     assert records == []
 
@@ -237,6 +228,5 @@ async def test_put_rejects_non_bytes_key(tmp_path: Path, store_cls: StoreClass):
     with pytest.raises(KeyError, match="invalid for key"):
         await store.put("a", b"1")  # type: ignore[arg-type]
 
-    assert await store.latest_sequence_number() == 0
     records = [record async for record in store._tree._wal.recover()]  # type: ignore
     assert records == []

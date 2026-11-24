@@ -1,6 +1,6 @@
 We keep forgetting what we want to do and we too lazy to maintain a tool for it :
 
-- Make SSTable recovered on DBReader instance
+- Remove support for in-memory store
 - Make flush / compaction handle durable sstable lifecycle (deletion etc)
 - Rotate manifest on condition in the background
 - Use cheaper encoding for key / value length

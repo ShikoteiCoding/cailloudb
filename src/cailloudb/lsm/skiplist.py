@@ -1,7 +1,7 @@
 import random
 from typing import Iterator
 
-from custom_types import MemTableEntry
+from lsm.custom_types import MemTableEntry
 from lsm.utils import build_internal_key
 from settings import (
     INTERNAL_KEY_LEN_METADATA,

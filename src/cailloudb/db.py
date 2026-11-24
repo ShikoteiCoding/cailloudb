@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, AsyncIterator
 
 from dbreader import DbReader
-from snapshot import DbSnapshot
+from dbsnapshot import DbSnapshot
 
 if TYPE_CHECKING:
     from store import BaseStore
@@ -19,7 +19,7 @@ class Db:
         return DbReader(self.store)
 
     def snapshot(self) -> DbSnapshot:
-        return DbSnapshot(self.store)
+        return DbSnapshot(self.store, self.store.create_snapshot())
 
     async def get(self, key: bytes) -> bytes | None:
         return await self.store.get(key)
@@ -34,9 +34,6 @@ class Db:
 
     async def write(self, batch: WriteBatch) -> None:
         await self.store.write(batch)
-
-    async def latest_sequence_number(self) -> int:
-        return await self.store.latest_sequence_number()
 
     def scan(
         self,

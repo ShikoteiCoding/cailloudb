@@ -11,12 +11,8 @@ class DbBuilder:
     #: Store ref
     store: BaseStore
 
-    #: Runtime settings
-    _settings: Settings
-
-    def __init__(self, store: BaseStore, settings: Settings | None = None):
+    def __init__(self, store: BaseStore):
         self.store = store
-        self._settings = settings or Settings()
 
     def build(self) -> Db:
         return Db(self.store)
