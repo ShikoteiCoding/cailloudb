@@ -3,6 +3,7 @@ test_lsmtree focuses on testing internals of the lsm as it acts
 as an orchestration layer between in-memory and disk storage.
 """
 
+import os
 import time
 from pathlib import Path
 
@@ -763,6 +764,37 @@ def test_lsmtree_flush_worker_exception_path(tmp_path: Path):
         lsmtree._flush_worker()
 
     assert stub_queue.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_durable_flush_keeps_pending_memtables(tmp_path, monkeypatch):
+    settings = _isolated_settings(
+        flush_enabled=False, compaction_enabled=False, memtable_max_bytes_size=1
+    )
+    tree = LSMTree(settings, True, tmp_path)
+    await tree.put(b"a", b"first")
+    await tree.put(b"b", b"second")
+
+    fsync = os.fsync
+    failed = False
+
+    def fail_first_sync(fd):
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise OSError("SSTable sync failed")
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_first_sync)
+    tree._flush_enabled = True
+    tree._start_flush_worker()
+    _wait_for_condition(lambda: tree._flush_queue.unfinished_tasks == 0)
+
+    assert failed
+    assert _read_manifest_edits(tmp_path) == []
+    assert (tmp_path / "wal_000001.log").exists()
+    assert tree.get(b"a") == b"first"
+    assert tree.get(b"b") == b"second"
 
 
 def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):

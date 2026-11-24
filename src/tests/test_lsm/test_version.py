@@ -1,11 +1,13 @@
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
 
 from cailloudb.lsm.custom_types import FileMetadata
 from cailloudb.lsm.sstable import SSTable
-from cailloudb.lsm.table_builder import write_iterator_to_sstables
+from cailloudb.lsm.table_builder import TableBuilder, write_iterator_to_sstables
 from cailloudb.lsm.utils import build_internal_key
 from cailloudb.lsm.version import Version, VersionEdit, VersionSet
 from cailloudb.settings import TOMBSTONE
@@ -299,6 +301,69 @@ def test_versionset_write_to_manifest_raises_when_handle_missing(tmp_path: Path)
 
     with pytest.raises(RuntimeError, match="Manifest file handle is not open"):
         versions._write_to_manifest(VersionEdit())
+
+
+def test_sstable_and_directory_sync_before_manifest(tmp_path, monkeypatch):
+    versions = VersionSet(tmp_path, max_levels=2)
+    builder = TableBuilder(versions.file_id_generator(), 128, True, tmp_path)
+    builder.add(build_internal_key(b"key", 0, False), b"value")
+    synced = []
+    fsync = os.fsync
+    manifest_fd = versions._manifest_file.fileno()
+
+    def record_sync(fd):
+        if fd == manifest_fd:
+            synced.append("manifest")
+        elif stat.S_ISDIR(os.fstat(fd).st_mode):
+            synced.append("directory")
+        else:
+            synced.append("table")
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", record_sync)
+    table, meta = builder.finish()
+    versions.log_and_apply(VersionEdit(added_files=[(0, meta)]), [table])
+
+    assert builder.writer.closed
+    assert synced == ["table", "directory", "manifest"]
+
+
+def test_manifest_sync_failure_keeps_previous_version(tmp_path, monkeypatch):
+    versions = VersionSet(tmp_path, max_levels=2)
+    for key in (b"original", b"replacement"):
+        builder = TableBuilder(versions.file_id_generator(), 128, True, tmp_path)
+        builder.add(build_internal_key(key, 0, False), b"value")
+        table, meta = builder.finish()
+        if key == b"original":
+            versions.log_and_apply(VersionEdit(added_files=[(0, meta)]), [table])
+
+    manifest_path = tmp_path / "MANIFEST-000001"
+    previous_manifest = manifest_path.read_bytes()
+    previous_version = versions.get_current_version()
+    fsync = os.fsync
+    manifest_fd = versions._manifest_file.fileno()
+    failed = False
+
+    def fail_manifest_sync_once(fd):
+        nonlocal failed
+        if fd == manifest_fd and not failed:
+            failed = True
+            raise OSError("manifest sync failed")
+        fsync(fd)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "fsync", fail_manifest_sync_once)
+        with pytest.raises(OSError, match="manifest sync failed"):
+            edit = VersionEdit(deleted_files=[(0, 1)], added_files=[(1, meta)])
+            versions.log_and_apply(edit, [table])
+
+    assert versions.get_current_version() is previous_version
+    assert versions.get(b"original", 0, previous_version) == b"value"
+    assert manifest_path.read_bytes() == previous_manifest
+
+    reopened = VersionSet(tmp_path, max_levels=2)
+    assert reopened.get(b"original", 0, reopened.get_current_version()) == b"value"
+    assert reopened.file_id_generator() == 3
 
 
 def test_versionset_get_and_scan(tmp_path: Path):

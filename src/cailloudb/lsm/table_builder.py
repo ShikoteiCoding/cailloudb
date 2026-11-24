@@ -1,4 +1,5 @@
 import io
+import os
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -166,9 +167,6 @@ class TableBuilder:
             STRUCT_SSTABLE_FOOTER.pack(index_offset, index_size, SSTABLE_MAGIC_NUMBER)
         )
         file_size = self.writer.tell()
-        self.writer.flush()
-        raw = self.writer.detach()
-        raw.seek(0)
 
         meta = FileMetadata(
             file_id=self.file_id,
@@ -178,12 +176,22 @@ class TableBuilder:
         )
 
         if self.durable_sstable:
+            with self.writer:
+                self.writer.flush()
+                os.fsync(self.writer.fileno())
+            directory_fd = os.open(self.dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
             sstable = DurableSSTable(
                 file_id=self.file_id,
                 dir=self.dir,
                 file_name=self.file_name,
             )
         else:
+            raw = self.writer.detach()
+            raw.seek(0)
             sstable = InMemorySSTable(
                 file_id=self.file_id,
                 file=io.BufferedReader(raw),

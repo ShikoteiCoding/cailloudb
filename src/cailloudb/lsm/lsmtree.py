@@ -1,4 +1,5 @@
 import heapq
+import logging
 import queue
 import threading
 import time
@@ -326,9 +327,13 @@ class LSMTree:
         if self._flush_queue is None:
             return
 
+        flush_failed = False
         while True:
+            memtable = None
             try:
                 memtable = self._flush_queue.get()
+                if flush_failed:
+                    continue
                 edit = VersionEdit()
                 # XXX: Handle retries and failures
                 generated_files = write_iterator_to_sstables(
@@ -363,11 +368,17 @@ class LSMTree:
 
                 if self._wal and memtable.log_number:
                     self._wal.delete(memtable.log_number)
-
-                self._flush_queue.task_done()
+            except OSError:
+                if memtable in self._immutable_memtables:
+                    # A later flush could make recovery skip this memtable's WAL
+                    flush_failed = True
+                logging.getLogger(__name__).exception("Memtable flush failed")
             except Exception:
                 # XXX: Improve error handling
                 pass
+            finally:
+                if memtable is not None:
+                    self._flush_queue.task_done()
 
     def _pick_and_compact(
         self,

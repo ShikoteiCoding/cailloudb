@@ -157,7 +157,7 @@ class VersionSet:
     _version_lock: threading.Lock
 
     #: Pointer to writeable MANIFEST file
-    _manifest_file: io.BufferedWriter
+    _manifest_file: io.FileIO
     _next_manifest_file_id: int
     _manifest_id_lock: threading.Lock
 
@@ -183,6 +183,7 @@ class VersionSet:
     def __init__(self, path: Path, max_levels: int):
         self._path = path
         self._version_lock = threading.Lock()
+        self._manifest_write_failed = False
         self._next_manifest_file_id = 1
         self._next_sstable_file_id = 1
         self._file_id_lock = threading.Lock()
@@ -220,7 +221,14 @@ class VersionSet:
             levels = [[] for _ in range(max_levels)]
             self._seq_num = SeqNum()
 
-        self._manifest_file = open(manifest_path, "ab")
+        # Avoid reusing IDs from SSTables left behind by a failed write
+        for path in self._path.glob("*.sst"):
+            if path.stem.isascii() and path.stem.isdecimal():
+                self._next_sstable_file_id = max(
+                    self._next_sstable_file_id, int(path.stem) + 1
+                )
+
+        self._manifest_file = open(manifest_path, "ab", buffering=0)
         self._current_version = Version(levels)
 
     @staticmethod
@@ -335,27 +343,51 @@ class VersionSet:
 
     def log_and_apply(self, edit: VersionEdit, sstables: list[SSTable]) -> None:
         with self._version_lock:
+            version = Version(self._compute_levels(edit))
+            tables = self._sstables_map.copy()
+            for _, file_id in edit.deleted_files:
+                tables.pop(file_id, None)
+            tables.update((table.file_id, table) for table in sstables)
+
             self._write_to_manifest(edit)
-            updated_levels = self._compute_levels(edit, sstables)
-            self._current_version = Version(updated_levels)
+            self._sstables_map = tables
+            self._current_version = version
+            with self._file_id_lock:
+                self._next_sstable_file_id = max(
+                    self._next_sstable_file_id, edit.next_file_id
+                )
 
     def _write_to_manifest(self, edit: VersionEdit) -> None:
         """
         Write a version change to the active manifest file.
         """
-        if not self._manifest_file:
+        manifest = self._manifest_file
+        if not manifest or manifest.closed:
             raise RuntimeError("Manifest file handle is not open or file is missing.")
+        if self._manifest_write_failed:
+            raise RuntimeError("Manifest rollback failed. Reopen before writing.")
 
         encoded_data = edit.encode()
-        self._manifest_file.write(encoded_data)
-        self._manifest_file.flush()
-        os.fsync(self._manifest_file.fileno())
+        offset = manifest.tell()
+        try:
+            if manifest.write(encoded_data) != len(encoded_data):
+                raise OSError("Incomplete manifest write")
+            os.fsync(manifest.fileno())
+        except OSError as error:
+            self._rollback_manifest(offset, error)
+            raise
 
-    def _compute_levels(
-        self,
-        edit: VersionEdit,
-        sstables: list[SSTable],  # XXX: Remove sstables
-    ) -> list[list[FileMetadata]]:
+    def _rollback_manifest(self, offset: int, write_error: OSError) -> None:
+        manifest = self._manifest_file
+        try:
+            manifest.truncate(offset)
+            manifest.seek(offset)
+            os.fsync(manifest.fileno())
+        except OSError as rollback_error:
+            self._manifest_write_failed = True
+            write_error.add_note(f"Could not roll back manifest edit: {rollback_error}")
+
+    def _compute_levels(self, edit: VersionEdit) -> list[list[FileMetadata]]:
         """
         Recompute levels from current levels and a version change.
         """
@@ -366,17 +398,10 @@ class VersionSet:
             updated_levels[level] = [
                 fm for fm in updated_levels[level] if fm["file_id"] != file_id
             ]
-            self._sstables_map.pop(file_id, None)
 
         for level, file_meta in edit.added_files:
             updated_levels[level].append(file_meta)
-            file_id = file_meta["file_id"]
 
-        # XXX: Remove sstables
-        for sstable in sstables:
-            self._sstables_map[sstable.file_id] = sstable
-
-        self._next_sstable_file_id = max(self._next_sstable_file_id, edit.next_file_id)
         return updated_levels
 
     def get(self, key: bytes, seq_num: int, version: Version) -> bytes | None:
