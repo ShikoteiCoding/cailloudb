@@ -239,16 +239,20 @@ def test_versionset_recover_from_manifest_builds_durable_sstable_map_from_added_
 
     (tmp_path / "CURRENT").write_text("MANIFEST-000001", encoding="utf-8")
     manifest_path = tmp_path / "MANIFEST-000001"
-    edit = VersionEdit(next_file_id=4, log_number=1)
-    edit.add_file(0, _meta(1, b"k1", b"k1"))
-    manifest_path.write_bytes(edit.encode())
+    retired_path = tmp_path / "000002.sst"
+    retired_path.write_bytes(b"incomplete cleanup from before restart")
+    add = VersionEdit(added_files=[(0, _meta(2, b"k1", b"k1"))], log_number=1)
+    replace = VersionEdit(
+        added_files=[(1, _meta(1, b"k1", b"k1"))], deleted_files=[(0, 2)]
+    )
+    manifest_path.write_bytes(add.encode() + replace.encode())
 
     versions = VersionSet(tmp_path, max_levels=2)
 
-    assert len(versions.get_current_version().get_levels()[0]) == 1
-    assert 1 in versions.get_sstable_map()
-    assert versions.get_sstable_map()[1].file_id == 1
-    assert versions._next_sstable_file_id == 4
+    assert len(versions.get_current_version().get_levels()[1]) == 1
+    assert set(versions.get_sstable_map()) == {1}
+    assert versions.file_id_generator() == 3
+    assert not retired_path.exists()
 
 
 def test_versionset_file_id_generator_is_monotonic(tmp_path: Path):
@@ -266,6 +270,7 @@ def test_versionset_log_and_apply_updates_levels_and_map_and_supports_deletes(
     tmp_path: Path,
 ):
     versions = VersionSet(tmp_path, max_levels=3)
+    table_map = versions.get_sstable_map()
 
     sst1 = FakeSSTable(1, [{"key": b"a", "seq_num": 0, "value": b"v1"}])
     sst2 = FakeSSTable(2, [{"key": b"n", "seq_num": 0, "value": b"v2"}])
@@ -289,6 +294,7 @@ def test_versionset_log_and_apply_updates_levels_and_map_and_supports_deletes(
     versions.log_and_apply(edit_delete, [])
 
     levels_after_delete = versions.get_current_version().get_levels()
+    assert versions.get_sstable_map() is table_map
     assert levels_after_delete[0] == []
     assert 1 not in versions.get_sstable_map()
     assert 2 in versions.get_sstable_map()
@@ -360,6 +366,7 @@ def test_manifest_sync_failure_keeps_previous_version(tmp_path, monkeypatch):
     assert versions.get_current_version() is previous_version
     assert versions.get(b"original", 0, previous_version) == b"value"
     assert manifest_path.read_bytes() == previous_manifest
+    assert (tmp_path / "000001.sst").exists()
 
     reopened = VersionSet(tmp_path, max_levels=2)
     assert reopened.get(b"original", 0, reopened.get_current_version()) == b"value"

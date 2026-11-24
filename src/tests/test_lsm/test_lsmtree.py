@@ -795,6 +795,9 @@ async def test_failed_durable_flush_keeps_pending_memtables(tmp_path, monkeypatc
     assert (tmp_path / "wal_000001.log").exists()
     assert tree.get(b"a") == b"first"
     assert tree.get(b"b") == b"second"
+    with pytest.raises(RuntimeError, match="Memtable flush failed"):
+        await tree.put(b"c", b"third")
+    tree.close()
 
 
 def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):
@@ -804,6 +807,40 @@ def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):
     lsmtree._start_compaction_worker()
 
     assert lsmtree._compaction_thread is None
+
+
+@pytest.mark.asyncio
+async def test_compaction_deletes_files_after_readers_finish(tmp_path):
+    settings = _isolated_settings(
+        flush_enabled=False,
+        compaction_enabled=False,
+        memtable_max_bytes_size=1,
+        sstable_l0_compaction_trigger=2,
+    )
+    tree = LSMTree(settings, True, tmp_path)
+    await tree.put(b"a", b"first")
+    await tree.put(b"b", b"second")
+    tree._flush_enabled = True
+    tree._start_flush_worker()
+    _wait_for_condition(lambda: tree._flush_queue.unfinished_tasks == 0)
+    old_files = set(tmp_path.glob("*.sst"))
+    assert len(old_files) == 2
+
+    scan = tree.scan(None, None)
+    assert next(scan) == (b"a", b"first")
+    snapshot = tree.create_snapshot()
+    tree._commit_compaction_result(tree._pick_and_compact())
+
+    assert all(path.exists() for path in old_files)
+    assert list(scan) == [(b"b", b"second")]
+    assert tree.get(b"a", snapshot) == b"first"
+    del snapshot
+    tree._versions.purge_obsolete_tables()
+
+    assert all(not path.exists() for path in old_files)
+    reopened = LSMTree(settings, True, tmp_path)
+    assert reopened.get(b"a") == b"first"
+    assert reopened.get(b"b") == b"second"
 
 
 @pytest.mark.asyncio

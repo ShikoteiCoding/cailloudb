@@ -1,8 +1,6 @@
 We keep forgetting what we want to do and we too lazy to maintain a tool for it :
 
 - Remove support for in-memory store
-- On startup, use the manifest to open only the SSTables the database still needs
-- Delete old SSTables once compaction is committed and readers are done using them
 - Rotate manifest on condition in the background
 - Use cheaper encoding for key / value length
 - Extend headers metadata (log number etc)

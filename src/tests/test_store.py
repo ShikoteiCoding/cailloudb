@@ -53,6 +53,11 @@ def test_store_close_releases_lock_and_is_idempotent(
 
     store.close()
 
+    assert store._tree._flush_thread is not None
+    assert not store._tree._flush_thread.is_alive()
+    assert store._tree._compaction_thread is not None
+    assert not store._tree._compaction_thread.is_alive()
+    assert store._tree._versions._manifest_file.closed
     assert lock_file.closed
     assert store._lock_file is None
 

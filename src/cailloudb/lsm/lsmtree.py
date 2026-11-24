@@ -1,8 +1,6 @@
 import heapq
-import logging
 import queue
 import threading
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
@@ -62,7 +60,7 @@ class LSMTree:
     _file_picker: FilePicker
 
     #: Flush queue and task for SC on background flush
-    _flush_queue: queue.Queue[MemTable]
+    _flush_queue: queue.Queue[MemTable | None]
     _flush_thread: threading.Thread | None
     _flush_enabled: bool
 
@@ -96,6 +94,8 @@ class LSMTree:
         self._compaction_interval_s = self._settings.compaction_interval_s
 
         self._mem_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._flush_failed = False
 
         self.init()
 
@@ -157,21 +157,23 @@ class LSMTree:
         """
         Put a key-value pair into the currently active memtable.
         """
-        seq_num = self._versions.get_latest_sequence_number()
-        if self._wal is not None and self._wal_enabled:
-            self._wal.append(key, seq_num, value)
-        self._insert(key, seq_num, value)
-        self._versions.increment_sequence_number()
+        with self._mem_lock:
+            seq_num = self._write_sequence_number()
+            if self._wal is not None and self._wal_enabled:
+                self._wal.append(key, seq_num, value)
+            self._insert(key, seq_num, value)
+            self._versions.increment_sequence_number()
 
     async def delete(self, key: bytes) -> None:
         """
         Syntactic sugar to put a tombstone marker.
         """
-        seq_num = self._versions.get_latest_sequence_number()
-        if self._wal is not None and self._wal_enabled:
-            self._wal.append(key, seq_num, b"")
-        self._insert(key, seq_num, TOMBSTONE)
-        self._versions.increment_sequence_number()
+        with self._mem_lock:
+            seq_num = self._write_sequence_number()
+            if self._wal is not None and self._wal_enabled:
+                self._wal.append(key, seq_num, b"")
+            self._insert(key, seq_num, TOMBSTONE)
+            self._versions.increment_sequence_number()
 
     async def write(self, batch: WriteBatch) -> None:
         """
@@ -179,14 +181,22 @@ class LSMTree:
 
         Returns how many operations were applied.
         """
-        seq_num = self._versions.get_latest_sequence_number()
-        batch.sync_header(seq_num)
-        if self._wal is not None and self._wal_enabled:
-            self._wal.append(batch, seq_num)
-        for key, value in batch:
-            self._insert(key, seq_num, value)
-            self._versions.increment_sequence_number()
-        self._maybe_rotate_memtable()
+        with self._mem_lock:
+            seq_num = self._write_sequence_number()
+            batch.sync_header(seq_num)
+            if self._wal is not None and self._wal_enabled:
+                self._wal.append(batch, seq_num)
+            for key, value in batch:
+                self._insert(key, seq_num, value)
+                self._versions.increment_sequence_number()
+            self._maybe_rotate_memtable()
+
+    def _write_sequence_number(self) -> int:
+        if self._stop.is_set():
+            raise RuntimeError("Database is closed")
+        if self._flush_failed:
+            raise RuntimeError("Memtable flush failed. Reopen before writing.")
+        return self.get_latest_sequence_number()
 
     def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -327,12 +337,14 @@ class LSMTree:
         if self._flush_queue is None:
             return
 
-        flush_failed = False
         while True:
             memtable = None
             try:
                 memtable = self._flush_queue.get()
-                if flush_failed:
+                if memtable is None:
+                    self._flush_queue.task_done()
+                    return
+                if self._flush_failed:
                     continue
                 edit = VersionEdit()
                 # XXX: Handle retries and failures
@@ -356,26 +368,22 @@ class LSMTree:
                 if max_file_id != -1:
                     edit.next_file_id = max_file_id + 1
 
-                if self._wal and self._wal_enabled:
-                    edit.log_number = self._wal.log_number
-
                 edit.last_seq_num = memtable.last_seq_num
 
                 # commit to disk then remove persisted memtable
                 with self._mem_lock:
+                    if self._wal and self._wal_enabled:
+                        edit.log_number = self._wal.log_number
                     self._versions.log_and_apply(edit, new_sstables)
                     self._immutable_memtables.remove(memtable)
 
                 if self._wal and memtable.log_number:
                     self._wal.delete(memtable.log_number)
-            except OSError:
-                if memtable in self._immutable_memtables:
-                    # A later flush could make recovery skip this memtable's WAL
-                    flush_failed = True
-                logging.getLogger(__name__).exception("Memtable flush failed")
             except Exception:
-                # XXX: Improve error handling
-                pass
+                with self._mem_lock:
+                    if memtable in self._immutable_memtables:
+                        # A later flush could make recovery skip this memtable's WAL
+                        self._flush_failed = True
             finally:
                 if memtable is not None:
                     self._flush_queue.task_done()
@@ -486,9 +494,23 @@ class LSMTree:
             - Compact
             - Commit
         """
-        while True:
-            time.sleep(self._compaction_interval_s)
+        while not self._stop.wait(self._compaction_interval_s):
             self._commit_compaction_result(self._pick_and_compact())
+            self._versions.purge_obsolete_tables(delete_files=self._durable_sstable)
+
+    def close(self) -> None:
+        with self._mem_lock:
+            if not self._stop.is_set():
+                self._stop.set()
+                if self._flush_thread is not None:
+                    self._flush_queue.put(None)
+        if self._flush_thread is not None:
+            self._flush_thread.join()
+        if self._compaction_thread is not None:
+            self._compaction_thread.join()
+        if self._wal is not None:
+            self._wal.close()
+        self._versions.close()
 
     def create_snapshot(self) -> EngineSnapshot:
         return self._versions.create_snapshot()
