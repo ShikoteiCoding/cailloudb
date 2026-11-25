@@ -228,6 +228,45 @@ def test_table_builder_finish_state_transition_and_file_layout_durable(tmp_path:
     assert magic == SSTABLE_MAGIC_NUMBER
 
 
+def test_durable_builder_closes_writer_when_finalizing_fails(tmp_path, monkeypatch):
+    builder = TableBuilder(1, SSTABLE_BLOCK_DEFAULT_SIZE, True, tmp_path)
+    builder.add(build_internal_key(b"key", 1, False), b"value")
+
+    def fail_block():
+        raise OSError("failed to write data block")
+
+    monkeypatch.setattr(builder, "_flush_block", fail_block)
+    with pytest.raises(OSError, match="failed to write data block"):
+        builder.finish()
+
+    assert builder.writer.closed
+
+
+@pytest.mark.parametrize("durable_sstable", [False, True])
+def test_builder_closes_writer_when_adding_fails(
+    tmp_path, monkeypatch, durable_sstable
+):
+    writers = []
+
+    def fail_add(builder, _key, _value):
+        writers.append(builder.writer)
+        raise OSError("failed to add entry")
+
+    monkeypatch.setattr(TableBuilder, "add", fail_add)
+    entries = iter([(build_internal_key(b"key", 1, False), b"value")])
+    with pytest.raises(OSError, match="failed to add entry"):
+        write_iterator_to_sstables(
+            entries,
+            _fixed_file_id_generator(1),
+            SSTABLE_MAX_FILE_SIZE,
+            SSTABLE_BLOCK_DEFAULT_SIZE,
+            durable_sstable,
+            tmp_path,
+        )
+
+    assert writers[0].closed
+
+
 def test_table_builder_durable_and_inmemory_produce_identical_bytes(tmp_path: Path):
     durable_settings = Settings()
 
@@ -255,6 +294,8 @@ def test_table_builder_durable_and_inmemory_produce_identical_bytes(tmp_path: Pa
 
     inmemory_sstable, inmemory_meta = inmemory_builder.finish()
     durable_sstable, durable_meta = durable_builder.finish()
+    inmemory_builder.close()
+    durable_builder.close()
 
     inmemory_bytes = inmemory_sstable.file.read()
     durable_bytes = durable_sstable.file.read()

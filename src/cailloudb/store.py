@@ -77,6 +77,7 @@ class BaseStore(_BaseStore):
         Close the store gracefully and release the lock file.
         """
         if self._lock_file is not None:
+            self._tree.close()
             try:
                 fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
                 self._lock_file.close()

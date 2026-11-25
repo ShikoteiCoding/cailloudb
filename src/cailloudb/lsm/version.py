@@ -2,6 +2,7 @@ import io
 import json
 import os
 import threading
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Iterator
 
@@ -209,10 +210,9 @@ class VersionSet:
             # Metadata in logs take precedence for some: last seq num etc ...
             if recovery_log_number == -1:
                 self.recovery_log_number = self._recover_log_number(self._path)
-                self._seq_num = SeqNum()
             else:
                 self.recovery_log_number = recovery_log_number
-                self._seq_num = SeqNum(max_seq_num)
+            self._seq_num = SeqNum(max_seq_num + 1)
         else:
             self._next_manifest_file_id = 1
             manifest_path = self._create_initial_manifest()
@@ -279,7 +279,7 @@ class VersionSet:
         """
         levels = [[] for _ in range(max_levels)]
         recovery_log_number = -1
-        max_seq_num = 0
+        max_seq_num = -1
 
         with manifest_path.open("rb") as f:
             for line in f:
@@ -288,26 +288,33 @@ class VersionSet:
 
                 recovery_log_number = max(recovery_log_number, edit.log_number)
                 self._next_sstable_file_id = max(
-                    self._next_sstable_file_id, edit.next_file_id
+                    self._next_sstable_file_id,
+                    edit.next_file_id,
+                    *(meta["file_id"] + 1 for _, meta in edit.added_files),
                 )
                 max_seq_num = max(edit.last_seq_num, max_seq_num)
 
+        with ExitStack() as readers:
+            tables = {}
+            for level in levels:
+                for meta in level:
+                    file_id = meta["file_id"]
+                    table = DurableSSTable(file_id, self._path, f"{file_id:06d}.sst")
+                    readers.callback(table.file.close)
+                    tables[file_id] = table
+            self._sstables_map = tables
+            readers.pop_all()
+
         return levels, recovery_log_number, max_seq_num
 
-    def _apply_edit_to_state(self, edit: VersionEdit, levels: list[list[FileMetadata]]):
-        """
-        Apply an atomic VersionEdit change to levels / sstable_maps.
-        """
+    def _apply_edit_to_state(
+        self, edit: VersionEdit, levels: list[list[FileMetadata]]
+    ) -> None:
         for level, file_id in edit.deleted_files:
             levels[level] = [fm for fm in levels[level] if fm["file_id"] != file_id]
-            self._sstables_map.pop(file_id, None)
 
         for level, file_meta in edit.added_files:
             levels[level].append(file_meta)
-            file_id = file_meta["file_id"]
-            self._sstables_map[file_id] = DurableSSTable(
-                file_id, self._path, f"{file_id:06d}.sst"
-            )
 
     def _create_initial_manifest(self) -> Path:
         """
@@ -351,6 +358,9 @@ class VersionSet:
         self._manifest_file.flush()
         os.fsync(self._manifest_file.fileno())
 
+    def close(self) -> None:
+        self._manifest_file.close()
+
     def _compute_levels(
         self,
         edit: VersionEdit,
@@ -359,24 +369,20 @@ class VersionSet:
         """
         Recompute levels from current levels and a version change.
         """
-        current_levels = self._current_version.get_levels()
-        updated_levels = [list(level_files) for level_files in current_levels]
+        updated_levels = self._current_version.copy().get_levels()
+        self._apply_edit_to_state(edit, updated_levels)
 
-        for level, file_id in edit.deleted_files:
-            updated_levels[level] = [
-                fm for fm in updated_levels[level] if fm["file_id"] != file_id
-            ]
+        for _, file_id in edit.deleted_files:
             self._sstables_map.pop(file_id, None)
-
-        for level, file_meta in edit.added_files:
-            updated_levels[level].append(file_meta)
-            file_id = file_meta["file_id"]
 
         # XXX: Remove sstables
         for sstable in sstables:
             self._sstables_map[sstable.file_id] = sstable
 
-        self._next_sstable_file_id = max(self._next_sstable_file_id, edit.next_file_id)
+        with self._file_id_lock:
+            self._next_sstable_file_id = max(
+                self._next_sstable_file_id, edit.next_file_id
+            )
         return updated_levels
 
     def get(self, key: bytes, seq_num: int, version: Version) -> bytes | None:

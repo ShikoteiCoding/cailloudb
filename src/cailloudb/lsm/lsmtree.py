@@ -1,7 +1,6 @@
 import heapq
 import queue
 import threading
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
@@ -95,6 +94,7 @@ class LSMTree:
         self._compaction_interval_s = self._settings.compaction_interval_s
 
         self._mem_lock = threading.Lock()
+        self._stop = threading.Event()
 
         self.init()
 
@@ -365,6 +365,8 @@ class LSMTree:
                     self._wal.delete(memtable.log_number)
 
                 self._flush_queue.task_done()
+            except queue.ShutDown:
+                return
             except Exception:
                 # XXX: Improve error handling
                 pass
@@ -465,6 +467,9 @@ class LSMTree:
             edit.delete_file(target_level, target_metadata["file_id"])
 
         self._versions.log_and_apply(edit, sstables)
+        if self._durable_sstable:
+            for _, file_id in edit.deleted_files:
+                (self._path / f"{file_id:06d}.sst").unlink(missing_ok=True)
 
     def _compaction_worker(self) -> None:
         """
@@ -475,9 +480,18 @@ class LSMTree:
             - Compact
             - Commit
         """
-        while True:
-            time.sleep(self._compaction_interval_s)
+        while not self._stop.wait(self._compaction_interval_s):
             self._commit_compaction_result(self._pick_and_compact())
+
+    def close(self) -> None:
+        self._stop.set()
+        self._flush_queue.shutdown()
+        for worker in (self._flush_thread, self._compaction_thread):
+            if worker is not None:
+                worker.join()
+        if self._wal is not None:
+            self._wal.close()
+        self._versions.close()
 
     def create_snapshot(self) -> EngineSnapshot:
         return self._versions.create_snapshot()

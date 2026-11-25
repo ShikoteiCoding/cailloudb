@@ -775,6 +775,44 @@ def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_durable_compaction_removes_inputs_and_reopens(tmp_path, monkeypatch):
+    settings = _isolated_settings(
+        wal_enabled=False,
+        compaction_enabled=False,
+        memtable_max_bytes_size=1,
+        sstable_l0_compaction_trigger=2,
+    )
+    tree = LSMTree(settings, True, tmp_path)
+    await tree.put(b"a", b"first")
+    await tree.put(b"b", b"second")
+    _wait_for_condition(lambda: tree._flush_queue.unfinished_tasks == 0)
+    inputs = set(tmp_path.glob("*.sst"))
+    assert len(inputs) == 2
+    result = tree._pick_and_compact()
+
+    def fail_manifest(_edit):
+        raise OSError("manifest write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(tree._versions, "_write_to_manifest", fail_manifest)
+        with pytest.raises(OSError, match="manifest write failed"):
+            tree._commit_compaction_result(result)
+    assert inputs <= set(tmp_path.glob("*.sst"))
+
+    tree._commit_compaction_result(result)
+    assert all(not path.exists() for path in inputs)
+    tree.close()
+
+    reopened = LSMTree(settings, True, tmp_path)
+    try:
+        assert reopened.get(b"a") == b"first"
+        assert reopened.get(b"b") == b"second"
+        assert reopened._versions.file_id_generator() == 4
+    finally:
+        reopened.close()
+
+
+@pytest.mark.asyncio
 async def test_lsmtree_compaction_worker_natural_background_flow_default_runtime(
     tmp_path: Path,
 ):
