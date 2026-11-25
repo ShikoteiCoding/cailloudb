@@ -242,7 +242,10 @@ def test_durable_builder_closes_writer_when_finalizing_fails(tmp_path, monkeypat
     assert builder.writer.closed
 
 
-def test_durable_builder_closes_writer_when_adding_fails(tmp_path, monkeypatch):
+@pytest.mark.parametrize("durable_sstable", [False, True])
+def test_builder_closes_writer_when_adding_fails(
+    tmp_path, monkeypatch, durable_sstable
+):
     writers = []
 
     def fail_add(builder, _key, _value):
@@ -257,7 +260,7 @@ def test_durable_builder_closes_writer_when_adding_fails(tmp_path, monkeypatch):
             _fixed_file_id_generator(1),
             SSTABLE_MAX_FILE_SIZE,
             SSTABLE_BLOCK_DEFAULT_SIZE,
-            True,
+            durable_sstable,
             tmp_path,
         )
 
@@ -291,6 +294,8 @@ def test_table_builder_durable_and_inmemory_produce_identical_bytes(tmp_path: Pa
 
     inmemory_sstable, inmemory_meta = inmemory_builder.finish()
     durable_sstable, durable_meta = durable_builder.finish()
+    inmemory_builder.close()
+    durable_builder.close()
 
     inmemory_bytes = inmemory_sstable.file.read()
     durable_bytes = durable_sstable.file.read()

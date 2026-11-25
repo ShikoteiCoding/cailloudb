@@ -1,7 +1,6 @@
 import abc
 import bisect
 import io
-import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -83,9 +82,8 @@ class SSTable(abc.ABC):
         self.file.seek(0)
 
     def _read_block_from(self, offset: int, length: int) -> bytes:
-        with self._file_lock:
-            self.file.seek(offset)
-            return self.file.read(length)
+        self.file.seek(offset)
+        return self.file.read(length)
 
     def __iter__(self) -> Iterator[tuple[bytes, bytes]]:
         """
@@ -195,7 +193,6 @@ class InMemorySSTable(SSTable):
     def __init__(self, file_id: int, file: io.BufferedReader):
         self.file_id = file_id
         self.file = file
-        self._file_lock = threading.Lock()
 
         self.index_keys = []
         self.index_meta = []
@@ -213,10 +210,5 @@ class DurableSSTable(SSTable):
         self.index_keys = []
         self.index_meta = []
         self.file = (dir / file_name).open(mode="rb")
-        self._file_lock = threading.Lock()
 
-        try:
-            self._load_index()
-        except BaseException:
-            self.file.close()
-            raise
+        self._load_index()

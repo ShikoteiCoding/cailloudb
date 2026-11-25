@@ -1,7 +1,6 @@
 import heapq
 import queue
 import threading
-from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
@@ -28,7 +27,7 @@ class LSMTree:
     LSM Tree used in cailloudb.store. It is effectively a coordination layer between
     the memtables and sstables.
 
-    The write path assumes a single writer.
+    Core assumption is single writer. So it is kept free of lock logic.
     """
 
     #: Runtime settings
@@ -61,7 +60,7 @@ class LSMTree:
     _file_picker: FilePicker
 
     #: Flush queue and task for SC on background flush
-    _flush_queue: queue.Queue[MemTable | None]
+    _flush_queue: queue.Queue[MemTable]
     _flush_thread: threading.Thread | None
     _flush_enabled: bool
 
@@ -96,9 +95,6 @@ class LSMTree:
 
         self._mem_lock = threading.Lock()
         self._stop = threading.Event()
-        self._write_in_progress = False
-        self._write_finished = threading.Event()
-        self._flush_failed = False
 
         self.init()
 
@@ -160,21 +156,21 @@ class LSMTree:
         """
         Put a key-value pair into the currently active memtable.
         """
-        with self._write_operation() as seq_num:
-            if self._wal is not None and self._wal_enabled:
-                self._wal.append(key, seq_num, value)
-            self._insert(key, seq_num, value)
-            self._versions.increment_sequence_number()
+        seq_num = self._versions.get_latest_sequence_number()
+        if self._wal is not None and self._wal_enabled:
+            self._wal.append(key, seq_num, value)
+        self._insert(key, seq_num, value)
+        self._versions.increment_sequence_number()
 
     async def delete(self, key: bytes) -> None:
         """
         Syntactic sugar to put a tombstone marker.
         """
-        with self._write_operation() as seq_num:
-            if self._wal is not None and self._wal_enabled:
-                self._wal.append(key, seq_num, b"")
-            self._insert(key, seq_num, TOMBSTONE)
-            self._versions.increment_sequence_number()
+        seq_num = self._versions.get_latest_sequence_number()
+        if self._wal is not None and self._wal_enabled:
+            self._wal.append(key, seq_num, b"")
+        self._insert(key, seq_num, TOMBSTONE)
+        self._versions.increment_sequence_number()
 
     async def write(self, batch: WriteBatch) -> None:
         """
@@ -182,31 +178,14 @@ class LSMTree:
 
         Returns how many operations were applied.
         """
-        with self._write_operation() as seq_num:
-            batch.sync_header(seq_num)
-            if self._wal is not None and self._wal_enabled:
-                self._wal.append(batch, seq_num)
-            for key, value in batch:
-                self._insert(key, seq_num, value)
-                self._versions.increment_sequence_number()
-            self._maybe_rotate_memtable()
-
-    @contextmanager
-    def _write_operation(self) -> Iterator[int]:
-        if self._stop.is_set():
-            raise RuntimeError("Database is closed")
-        # Register the write before checking again so close can wait for it
-        self._write_in_progress = True
-        try:
-            if self._stop.is_set():
-                raise RuntimeError("Database is closed")
-            if self._flush_failed:
-                raise RuntimeError("Memtable flush failed. Reopen before writing.")
-            yield self.get_latest_sequence_number()
-        finally:
-            self._write_in_progress = False
-            if self._stop.is_set():
-                self._write_finished.set()
+        seq_num = self._versions.get_latest_sequence_number()
+        batch.sync_header(seq_num)
+        if self._wal is not None and self._wal_enabled:
+            self._wal.append(batch, seq_num)
+        for key, value in batch:
+            self._insert(key, seq_num, value)
+            self._versions.increment_sequence_number()
+        self._maybe_rotate_memtable()
 
     def _insert(self, key: bytes, seq_num: int, value: bytes) -> None:
         """
@@ -320,15 +299,14 @@ class LSMTree:
         The new log is born before flush so later writes cannot land in sealed file
         """
         if self._memtable.is_full():
-            sealed = self._memtable
+            self._immutable_memtables.append(self._memtable)
+            self._flush_queue.put(self._memtable)
             log_number = None
             if self._wal_enabled and self._wal:
                 log_number = self._wal.roll()
-            self._immutable_memtables.append(sealed)
             self._memtable = MemTable(
                 max_bytes_size=self._memtable_size, log_number=log_number
             )
-            self._flush_queue.put(sealed)
 
     def _start_flush_worker(self) -> None:
         """
@@ -349,14 +327,8 @@ class LSMTree:
             return
 
         while True:
-            memtable = None
             try:
                 memtable = self._flush_queue.get()
-                if memtable is None:
-                    self._flush_queue.task_done()
-                    return
-                if self._flush_failed:
-                    continue
                 edit = VersionEdit()
                 # XXX: Handle retries and failures
                 generated_files = write_iterator_to_sstables(
@@ -379,25 +351,25 @@ class LSMTree:
                 if max_file_id != -1:
                     edit.next_file_id = max_file_id + 1
 
+                if self._wal and self._wal_enabled:
+                    edit.log_number = self._wal.log_number
+
                 edit.last_seq_num = memtable.last_seq_num
 
                 # commit to disk then remove persisted memtable
                 with self._mem_lock:
-                    if self._wal and self._wal_enabled:
-                        edit.log_number = self._wal.log_number
                     self._versions.log_and_apply(edit, new_sstables)
                     self._immutable_memtables.remove(memtable)
 
                 if self._wal and memtable.log_number:
                     self._wal.delete(memtable.log_number)
+
+                self._flush_queue.task_done()
+            except queue.ShutDown:
+                return
             except Exception:
-                with self._mem_lock:
-                    if memtable in self._immutable_memtables:
-                        # A later flush could make recovery skip this memtable's WAL
-                        self._flush_failed = True
-            finally:
-                if memtable is not None:
-                    self._flush_queue.task_done()
+                # XXX: Improve error handling
+                pass
 
     def _pick_and_compact(
         self,
@@ -495,6 +467,9 @@ class LSMTree:
             edit.delete_file(target_level, target_metadata["file_id"])
 
         self._versions.log_and_apply(edit, sstables)
+        if self._durable_sstable:
+            for _, file_id in edit.deleted_files:
+                (self._path / f"{file_id:06d}.sst").unlink(missing_ok=True)
 
     def _compaction_worker(self) -> None:
         """
@@ -507,16 +482,10 @@ class LSMTree:
         """
         while not self._stop.wait(self._compaction_interval_s):
             self._commit_compaction_result(self._pick_and_compact())
-            self._versions.purge_obsolete_tables(delete_files=self._durable_sstable)
 
     def close(self) -> None:
-        with self._mem_lock:
-            if not self._stop.is_set():
-                self._stop.set()
-                if self._write_in_progress:
-                    self._write_finished.wait()
-                if self._flush_thread is not None:
-                    self._flush_queue.put(None)
+        self._stop.set()
+        self._flush_queue.shutdown()
         for worker in (self._flush_thread, self._compaction_thread):
             if worker is not None:
                 worker.join()

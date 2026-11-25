@@ -3,7 +3,6 @@ test_lsmtree focuses on testing internals of the lsm as it acts
 as an orchestration layer between in-memory and disk storage.
 """
 
-import os
 import time
 from pathlib import Path
 
@@ -766,40 +765,6 @@ def test_lsmtree_flush_worker_exception_path(tmp_path: Path):
     assert stub_queue.calls == 2
 
 
-@pytest.mark.asyncio
-async def test_failed_durable_flush_keeps_pending_memtables(tmp_path, monkeypatch):
-    settings = _isolated_settings(
-        flush_enabled=False, compaction_enabled=False, memtable_max_bytes_size=1
-    )
-    tree = LSMTree(settings, True, tmp_path)
-    await tree.put(b"a", b"first")
-    await tree.put(b"b", b"second")
-
-    fsync = os.fsync
-    failed = False
-
-    def fail_first_sync(fd):
-        nonlocal failed
-        if not failed:
-            failed = True
-            raise OSError("SSTable sync failed")
-        fsync(fd)
-
-    monkeypatch.setattr(os, "fsync", fail_first_sync)
-    tree._flush_enabled = True
-    tree._start_flush_worker()
-    _wait_for_condition(lambda: tree._flush_queue.unfinished_tasks == 0)
-
-    assert failed
-    assert _read_manifest_edits(tmp_path) == []
-    assert (tmp_path / "wal_000001.log").exists()
-    assert tree.get(b"a") == b"first"
-    assert tree.get(b"b") == b"second"
-    with pytest.raises(RuntimeError, match="Memtable flush failed"):
-        await tree.put(b"c", b"third")
-    tree.close()
-
-
 def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):
     settings = _isolated_settings(compaction_enabled=False)
     lsmtree = LSMTree(settings, False, tmp_path)
@@ -810,9 +775,9 @@ def test_lsmtree_start_compaction_worker_noop_when_disabled(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_compaction_deletes_files_after_readers_finish(tmp_path):
+async def test_durable_compaction_removes_inputs_and_reopens(tmp_path, monkeypatch):
     settings = _isolated_settings(
-        flush_enabled=False,
+        wal_enabled=False,
         compaction_enabled=False,
         memtable_max_bytes_size=1,
         sstable_l0_compaction_trigger=2,
@@ -820,27 +785,31 @@ async def test_compaction_deletes_files_after_readers_finish(tmp_path):
     tree = LSMTree(settings, True, tmp_path)
     await tree.put(b"a", b"first")
     await tree.put(b"b", b"second")
-    tree._flush_enabled = True
-    tree._start_flush_worker()
     _wait_for_condition(lambda: tree._flush_queue.unfinished_tasks == 0)
-    old_files = set(tmp_path.glob("*.sst"))
-    assert len(old_files) == 2
+    inputs = set(tmp_path.glob("*.sst"))
+    assert len(inputs) == 2
+    result = tree._pick_and_compact()
 
-    scan = tree.scan(None, None)
-    assert next(scan) == (b"a", b"first")
-    snapshot = tree.create_snapshot()
-    tree._commit_compaction_result(tree._pick_and_compact())
+    def fail_manifest(_edit):
+        raise OSError("manifest write failed")
 
-    assert all(path.exists() for path in old_files)
-    assert list(scan) == [(b"b", b"second")]
-    assert tree.get(b"a", snapshot) == b"first"
-    del snapshot
-    tree._versions.purge_obsolete_tables()
+    with monkeypatch.context() as patch:
+        patch.setattr(tree._versions, "_write_to_manifest", fail_manifest)
+        with pytest.raises(OSError, match="manifest write failed"):
+            tree._commit_compaction_result(result)
+    assert inputs <= set(tmp_path.glob("*.sst"))
 
-    assert all(not path.exists() for path in old_files)
+    tree._commit_compaction_result(result)
+    assert all(not path.exists() for path in inputs)
+    tree.close()
+
     reopened = LSMTree(settings, True, tmp_path)
-    assert reopened.get(b"a") == b"first"
-    assert reopened.get(b"b") == b"second"
+    try:
+        assert reopened.get(b"a") == b"first"
+        assert reopened.get(b"b") == b"second"
+        assert reopened._versions.file_id_generator() == 4
+    finally:
+        reopened.close()
 
 
 @pytest.mark.asyncio

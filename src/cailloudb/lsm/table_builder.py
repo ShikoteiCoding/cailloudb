@@ -1,5 +1,6 @@
 import io
 import os
+from contextlib import closing
 from pathlib import Path
 from typing import Callable, Iterator
 
@@ -50,8 +51,8 @@ def write_iterator_to_sstables(
         if builder is not None:
             results.append(builder.finish())
     finally:
-        if builder is not None and durable_sstable:
-            builder.writer.close()
+        if builder is not None:
+            builder.close()
 
     return results
 
@@ -105,6 +106,11 @@ class TableBuilder:
             self.writer = (self.dir / self.file_name).open(mode="xb")
         else:
             self.writer = io.BufferedWriter(io.BytesIO())
+
+    def close(self) -> None:
+        # After detach, the in-memory SSTable owns the stream
+        if self.writer.raw is not None:
+            self.writer.close()
 
     def add(self, internal_key: bytes, value: bytes) -> None:
         """
@@ -169,7 +175,7 @@ class TableBuilder:
 
     def finish(self) -> tuple[SSTable, FileMetadata]:
         if self.durable_sstable:
-            with self.writer:
+            with closing(self):
                 file_size = self._finish_file()
                 self.writer.flush()
                 os.fsync(self.writer.fileno())

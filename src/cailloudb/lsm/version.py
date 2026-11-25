@@ -5,7 +5,6 @@ import threading
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Iterator
-from weakref import WeakSet
 
 from lsm.custom_types import FileMetadata, SeqNum, SSTableEntry
 from lsm.engine_snapshot import EngineSnapshot
@@ -159,7 +158,7 @@ class VersionSet:
     _version_lock: threading.Lock
 
     #: Pointer to writeable MANIFEST file
-    _manifest_file: io.FileIO
+    _manifest_file: io.BufferedWriter
     _next_manifest_file_id: int
     _manifest_id_lock: threading.Lock
 
@@ -185,13 +184,10 @@ class VersionSet:
     def __init__(self, path: Path, max_levels: int):
         self._path = path
         self._version_lock = threading.Lock()
-        self._manifest_write_failed = False
         self._next_manifest_file_id = 1
         self._next_sstable_file_id = 1
         self._file_id_lock = threading.Lock()
         self._sstables_map = {}
-        self._obsolete_tables: dict[int, SSTable | None] = {}
-        self._live_versions: WeakSet[Version] = WeakSet()
         self.recovery_log_number = -1
 
         self.init(max_levels)
@@ -214,10 +210,9 @@ class VersionSet:
             # Metadata in logs take precedence for some: last seq num etc ...
             if recovery_log_number == -1:
                 self.recovery_log_number = self._recover_log_number(self._path)
-                self._seq_num = SeqNum()
             else:
                 self.recovery_log_number = recovery_log_number
-                self._seq_num = SeqNum(max_seq_num)
+            self._seq_num = SeqNum(max_seq_num + 1)
         else:
             self._next_manifest_file_id = 1
             manifest_path = self._create_initial_manifest()
@@ -225,17 +220,8 @@ class VersionSet:
             levels = [[] for _ in range(max_levels)]
             self._seq_num = SeqNum()
 
-        # Reserve IDs for files that were never added to the manifest
-        for path in self._path.glob("*.sst"):
-            if path.stem.isascii() and path.stem.isdecimal():
-                self._next_sstable_file_id = max(
-                    self._next_sstable_file_id, int(path.stem) + 1
-                )
-
-        self._manifest_file = open(manifest_path, "ab", buffering=0)
+        self._manifest_file = open(manifest_path, "ab")
         self._current_version = Version(levels)
-        self._live_versions.add(self._current_version)
-        self.purge_obsolete_tables()
 
     @staticmethod
     def _recover_log_number(dir: Path) -> int:
@@ -293,38 +279,37 @@ class VersionSet:
         """
         levels = [[] for _ in range(max_levels)]
         recovery_log_number = -1
-        max_seq_num = 0
-        deleted_ids = set()
+        max_seq_num = -1
 
         with manifest_path.open("rb") as f:
             for line in f:
                 edit = VersionEdit.decode(line)
                 self._apply_edit_to_state(edit, levels)
-                deleted_ids.update(file_id for _, file_id in edit.deleted_files)
 
                 recovery_log_number = max(recovery_log_number, edit.log_number)
                 self._next_sstable_file_id = max(
-                    self._next_sstable_file_id, edit.next_file_id
+                    self._next_sstable_file_id,
+                    edit.next_file_id,
+                    *(meta["file_id"] + 1 for _, meta in edit.added_files),
                 )
                 max_seq_num = max(edit.last_seq_num, max_seq_num)
 
-        tables = {}
         with ExitStack() as readers:
+            tables = {}
             for level in levels:
                 for meta in level:
                     file_id = meta["file_id"]
                     table = DurableSSTable(file_id, self._path, f"{file_id:06d}.sst")
                     readers.callback(table.file.close)
                     tables[file_id] = table
+            self._sstables_map = tables
             readers.pop_all()
-        self._sstables_map = tables
-        self._obsolete_tables.update(dict.fromkeys(deleted_ids - tables.keys()))
-        self._next_sstable_file_id = max(
-            self._next_sstable_file_id, max(deleted_ids | tables.keys(), default=0) + 1
-        )
+
         return levels, recovery_log_number, max_seq_num
 
-    def _apply_edit_to_state(self, edit: VersionEdit, levels: list[list[FileMetadata]]):
+    def _apply_edit_to_state(
+        self, edit: VersionEdit, levels: list[list[FileMetadata]]
+    ) -> None:
         for level, file_id in edit.deleted_files:
             levels[level] = [fm for fm in levels[level] if fm["file_id"] != file_id]
 
@@ -357,91 +342,55 @@ class VersionSet:
 
     def log_and_apply(self, edit: VersionEdit, sstables: list[SSTable]) -> None:
         with self._version_lock:
-            version = self._current_version.copy()
-            self._apply_edit_to_state(edit, version.get_levels())
             self._write_to_manifest(edit)
-
-            for _, file_id in edit.deleted_files:
-                table = self._sstables_map.pop(file_id, None)
-                if table is not None:
-                    self._obsolete_tables[file_id] = table
-            self._sstables_map.update((table.file_id, table) for table in sstables)
-            self._live_versions.add(version)
-            self._current_version = version
-            with self._file_id_lock:
-                self._next_sstable_file_id = max(
-                    self._next_sstable_file_id, edit.next_file_id
-                )
-
-    def purge_obsolete_tables(self, *, delete_files: bool = True) -> None:
-        with self._version_lock:
-            if self._manifest_file.closed or not self._obsolete_tables:
-                return
-            # Scans and snapshots keep their versions alive
-            referenced_ids = {
-                meta["file_id"]
-                for version in self._live_versions
-                if version is not self._current_version
-                for level in version.get_levels()
-                for meta in level
-            }
-            for file_id in self._obsolete_tables.keys() - referenced_ids:
-                table = self._obsolete_tables[file_id]
-                try:
-                    if delete_files and (
-                        table is None or isinstance(table, DurableSSTable)
-                    ):
-                        (self._path / f"{file_id:06d}.sst").unlink(missing_ok=True)
-                    if isinstance(table, DurableSSTable):
-                        table.file.close()
-                except OSError:
-                    continue
-                del self._obsolete_tables[file_id]
-
-    def close(self) -> None:
-        with self._version_lock:
-            self._manifest_file.close()
+            updated_levels = self._compute_levels(edit, sstables)
+            self._current_version = Version(updated_levels)
 
     def _write_to_manifest(self, edit: VersionEdit) -> None:
         """
         Write a version change to the active manifest file.
         """
-        manifest = self._manifest_file
-        if not manifest or manifest.closed:
+        if not self._manifest_file:
             raise RuntimeError("Manifest file handle is not open or file is missing.")
-        if self._manifest_write_failed:
-            raise RuntimeError("Manifest rollback failed. Reopen before writing.")
 
         encoded_data = edit.encode()
-        offset = manifest.tell()
-        try:
-            if manifest.write(encoded_data) != len(encoded_data):
-                raise OSError("Incomplete manifest write")
-            os.fsync(manifest.fileno())
-        except OSError as error:
-            self._rollback_manifest(offset, error)
-            raise
+        self._manifest_file.write(encoded_data)
+        self._manifest_file.flush()
+        os.fsync(self._manifest_file.fileno())
 
-    def _rollback_manifest(self, offset: int, write_error: OSError) -> None:
-        manifest = self._manifest_file
-        try:
-            manifest.truncate(offset)
-            manifest.seek(offset)
-            os.fsync(manifest.fileno())
-        except OSError as rollback_error:
-            self._manifest_write_failed = True
-            write_error.add_note(f"Could not roll back manifest edit: {rollback_error}")
+    def close(self) -> None:
+        self._manifest_file.close()
 
-    def _get_sstable(self, file_id: int) -> SSTable | None:
-        with self._version_lock:
-            return self._sstables_map.get(file_id) or self._obsolete_tables.get(file_id)
+    def _compute_levels(
+        self,
+        edit: VersionEdit,
+        sstables: list[SSTable],  # XXX: Remove sstables
+    ) -> list[list[FileMetadata]]:
+        """
+        Recompute levels from current levels and a version change.
+        """
+        updated_levels = self._current_version.copy().get_levels()
+        self._apply_edit_to_state(edit, updated_levels)
+
+        for _, file_id in edit.deleted_files:
+            self._sstables_map.pop(file_id, None)
+
+        # XXX: Remove sstables
+        for sstable in sstables:
+            self._sstables_map[sstable.file_id] = sstable
+
+        with self._file_id_lock:
+            self._next_sstable_file_id = max(
+                self._next_sstable_file_id, edit.next_file_id
+            )
+        return updated_levels
 
     def get(self, key: bytes, seq_num: int, version: Version) -> bytes | None:
         candidate_files = version.find_files_containing(key)
 
         for file_meta in candidate_files:
             file_id = file_meta["file_id"]
-            sstable = self._get_sstable(file_id)
+            sstable = self._sstables_map.get(file_id)
 
             if sstable is not None:
                 if entry := sstable.get(key, seq_num):
@@ -476,15 +425,16 @@ class VersionSet:
                     else:
                         break
 
-                if sst := self._get_sstable(meta["file_id"]):
-                    yield from sst.scan(start_key, end_key, seq_num)
+                sst = self._sstables_map[meta["file_id"]]
+                for entry in sst.scan(start_key, end_key, seq_num):
+                    yield entry
 
     def create_snapshot(self) -> EngineSnapshot:
         with self._version_lock:
             return EngineSnapshot(
                 # seq num generator is a forward, exclude the "next" bounded entry
                 int(self._seq_num) - 1,
-                self._current_version,
+                self._current_version.copy(),
             )
 
     def get_current_version(self) -> Version:
